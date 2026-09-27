@@ -9,6 +9,19 @@ function save_progress_json() { return json_stringify(global.save_data); }
 function coop_battle_ready() { global.fixture_ready++; }
 function coop_battle_tick() { global.fixture_ticks++; }
 function coop_battle_command(_p) { global.fixture_commands++; }
+// Session routing only: no codecs, textures or screen capture run in this fixture.
+function coop_screen_receive(_p) {
+    array_push(global.fixture_screens,coop_clone(_p));
+    global.fixture_screen_battle_at_receive=coop_get(global.fixture_screen_session,"battle_started",false);
+    if (!global.fixture_screen_accept) return false;
+    global.fixture_screen=coop_clone(_p);
+    return true;
+}
+function coop_screen_ack(_p) {
+    array_push(global.fixture_screen_acks,coop_clone(_p));
+    if (_p.seq==1 && coop_get(_p,"accepted",false)) global.fixture_live_screen_ack=true;
+}
+function coop_screen_reset() { global.fixture_screen_resets++; global.fixture_screen=undefined; }
 function fixture_profile(_coins) {
     return {coins:_coins,player:{name:"会话测试",total_time:0},unlocked_items:{max_slot:2},
         unlocked_cards:[{id:"small_fire",shape:0,level:0},{id:"toast_bread",shape:0,level:0}]};
@@ -191,8 +204,69 @@ function fixture_units() {
     global.save_data.player.name="改名即时保存";global.save_data.player.total_time+=1/60;
     fixture_expect("other player fields are not hidden by timer-only debounce",_timed.save_campaign() && is_struct(_timed.campaign_request) && variable_struct_get(_timed.campaign_request.profiles,"host-test").player.name=="改名即时保存");
     fixture_loadout_units();
+    fixture_screen_units();
     // Clear only this unique test app's credentials before the live protocol test.
     for(var _i=0;_i<3;_i++) {var _path=["coop/session.json","coop/session.json.pending","coop/session.json.bak"][_i];if(file_exists(_path))file_delete(_path);}
+}
+function fixture_screen_units() {
+    fixture_globals(100);
+    var _guest=fixture_unit_session(); _guest.role="guest"; _guest.player_id="guest-test";
+    global.fixture_screen_session=_guest;
+    var _frame={seq:7,stream_id:"stream-unit",room:"room_menu",title:"地图界面",width:1,height:1,encoding:"png",image:"routing-only"};
+    var _state={players:_guest.players,room_status:"lobby",match_id:undefined,preparation:undefined,
+        features:{personal_loadouts:true,shared_screen:true},shared_screen:_frame};
+    var _count=array_length(global.fixture_screens);
+    _guest.update_state(_state);
+    fixture_expect("server shared-screen capability reaches session",_guest.shared_screen_supported);
+    fixture_expect("guest restores lobby frame from authoritative state",array_length(global.fixture_screens)==_count+1 && global.fixture_screen.seq==7 && global.fixture_screen.title=="地图界面");
+    _frame.type="screen_frame"; _frame.seq=8; _guest.packet(_frame);
+    fixture_expect("guest forwards live nonbattle frame without altering payload",global.fixture_screen.seq==8 && global.fixture_screen.image=="routing-only" && global.fixture_screen.stream_id=="stream-unit");
+    _count=array_length(global.fixture_screens); _guest.role="host"; _guest.packet(_frame);
+    fixture_expect("host never consumes guest-rendered screen frames",array_length(global.fixture_screens)==_count);
+    _guest.role="guest"; _state.preparation=fixture_preparation("screen-level",1); _guest.update_state(_state);
+    fixture_expect("entering deck selection clears previous shared frame",is_undefined(global.fixture_screen));
+    _guest.packet(_frame);
+    fixture_expect("deck selection blocks old and live shared frames",array_length(global.fixture_screens)==_count);
+    _state.preparation=undefined; _state.room_status="running"; _state.match_id="screen-match";
+    _guest.update_state(_state); _guest.packet(_frame);
+    fixture_expect("battle state blocks stored and live nonbattle frames",array_length(global.fixture_screens)==_count && is_undefined(global.fixture_screen));
+    _guest.room_status="finished"; _guest.latest={game_over:true,result_marker:"preserve-visible-result"}; _guest.previous={tick:5};
+    global.fixture_screen_accept=false; _guest.packet(_frame);
+    fixture_expect("rejected postbattle frame preserves visible result and battle mode",_guest.battle_started && _guest.latest.result_marker=="preserve-visible-result" && _guest.previous.tick==5);
+    global.fixture_screen_accept=true; _guest.packet(_frame);
+    fixture_expect("host returning to shared screen ends guest result presentation before callback",!_guest.battle_started && !global.fixture_screen_battle_at_receive && global.fixture_screen.seq==8);
+    fixture_expect("accepted shared screen releases previous battle snapshots",is_undefined(_guest.latest) && is_undefined(_guest.previous));
+    _guest.battle_started=true;
+    _state.room_status="lobby"; _state.match_id=undefined; _guest.update_state(_state);
+    fixture_expect("state restoration sets nonbattle mode before cached frame callback",!global.fixture_screen_battle_at_receive && !_guest.battle_started);
+    var _resets=global.fixture_screen_resets;
+    _guest.event({kind:"disconnected"});
+    fixture_expect("network loss clears frame before reconnect",is_undefined(global.fixture_screen) && global.fixture_screen_resets>_resets && !_guest.connected);
+    _guest.update_state(_state); _resets=global.fixture_screen_resets;
+    _state.shared_screen=undefined; _guest.packet({type:"loadout_state",state:_state});
+    fixture_expect("changing level without cached frame clears old pixels",is_undefined(global.fixture_screen) && global.fixture_screen_resets>_resets);
+    _guest.packet(_frame); _guest.preserve_solo();
+    fixture_expect("leave clears frame and server capability",_guest.leave() && is_undefined(global.fixture_screen) && !_guest.shared_screen_supported);
+    _guest.shared_screen_supported=true; coop_screen_receive(_frame); _guest.reset_entry();
+    fixture_expect("new room entry cannot reuse preceding screen",is_undefined(global.fixture_screen) && !_guest.shared_screen_supported);
+    _count=array_length(global.fixture_screen_acks);
+    _guest.packet({type:"screen_frame_ack",seq:8,accepted:false,dropped:"rate_limited",request_id:"frame-request"});
+    var _ack=global.fixture_screen_acks[_count];
+    fixture_expect("screen acknowledgements preserve sequence and drop reason",array_length(global.fixture_screen_acks)==_count+1 && _ack.seq==8 && !_ack.accepted && _ack.dropped=="rate_limited" && _ack.request_id=="frame-request");
+    var _host=fixture_unit_session(); _host.battle_started=true; _host.match_id="command-match"; _host.room_status="running";
+    global.coop_battle={snapshot_requested:false};
+    var _commands=global.fixture_commands;
+    var _command={type:"command",match_id:"command-match",command_id:1,player_id:"guest-test",seq:1,action:"place_player",payload:{row:2,col:3}};
+    _host.packet(_command);
+    fixture_expect("accepted command requests a prompt authoritative snapshot",global.fixture_commands==_commands+1 && global.coop_battle.snapshot_requested && _host.applied_command_id==1);
+    global.coop_battle.snapshot_requested=false; _host.packet(_command);
+    fixture_expect("duplicate command cannot reapply or request another snapshot",global.fixture_commands==_commands+1 && !global.coop_battle.snapshot_requested);
+    _command.command_id=2; _command.match_id="stale-match"; _host.packet(_command);
+    fixture_expect("stale-match command cannot request a snapshot",global.fixture_commands==_commands+1 && !global.coop_battle.snapshot_requested);
+    _command.match_id="command-match"; _state.room_status="running"; _state.match_id="command-match"; _state.pending_commands=[_command];
+    _host.update_state(_state);
+    fixture_expect("queued command replay after reconnect requests snapshot",global.fixture_commands==_commands+2 && global.coop_battle.snapshot_requested && _host.applied_command_id==2);
+    global.fixture_commands=0; global.coop_battle={snapshot_requested:false}; global.fixture_screen_session=undefined;
 }
 function fixture_loadout_units() {
     fixture_globals(100);
@@ -292,6 +366,9 @@ function fixture_peer_event(_e) {
         global.fixture_peer_id=_p.player_id;
         fixture_expect("actual CoopSession invitation admits native peer",array_length(_p.state.players)==2);
         global.fixture_stage=2;
+    } else if(_p.type=="screen_frame"){
+        fixture_expect("native peer receives exact shared-screen protocol payload",_p.seq==1 && _p.room=="room_menu" && _p.width==1 && _p.height==1 && _p.title=="共享地图 中文" && _p.encoding=="png" && _p.image==global.fixture_png && string_length(_p.stream_id)>0);
+        global.fixture_live_screen_seen=true;
     } else if(_p.type=="loadout_state"){
         if(coop_get(_p,"request_id","")=="peer-deck" || coop_get(_p,"request_id","")=="peer-ready") global.fixture_peer_revision=_p.state.preparation.revision;
     } else if(_p.type=="match_started"){
@@ -309,6 +386,10 @@ function fixture_peer_event(_e) {
 }
 function transport_test_start() {
     global.fixture_tests=[];global.fixture_sent=[];global.fixture_solo_saves=0;global.fixture_navigation=0;
+    global.fixture_screens=[];global.fixture_screen_acks=[];global.fixture_screen_resets=0;global.fixture_screen=undefined;
+    global.fixture_screen_session=undefined;global.fixture_screen_battle_at_receive=false;global.fixture_screen_accept=true;
+    global.fixture_live_screen_ack=false;global.fixture_live_screen_seen=false;
+    global.fixture_png="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMwLu8AAAITATOkoC5YAAAAAElFTkSuQmCC";
     global.fixture_commands=0;global.fixture_launches=0;global.fixture_ready=0;global.fixture_ticks=0;global.fixture_clipboard="";global.fixture_write_fail=false;global.fixture_done=false;
     global.fixture_peer_id="";global.fixture_stage=0;global.fixture_input_ack=false;global.fixture_snapshot_seen=false;global.fixture_result_seen=false;
     global.fixture_start=current_time;global.fixture_deadline=current_time+25000;
@@ -331,6 +412,13 @@ function transport_test_step() {
         }break;
     case 2:
         if(global.session.all_connected()){
+            fixture_expect("actual server advertises shared-screen feature",global.session.shared_screen_supported);
+            fixture_expect("session sends host frame through native JSON transport",global.session.send("screen_frame",{seq:1,room:"room_menu",width:1,height:1,title:"共享地图 中文",encoding:"png",image:global.fixture_png}));
+            global.fixture_stage=20;
+        }break;
+    case 20:
+        if(global.fixture_live_screen_seen && global.fixture_live_screen_ack){
+            fixture_expect("real server frame ACK reaches session callback",global.fixture_live_screen_ack);
             global.save_data.coins=120;
             fixture_expect("actual campaign is queued for durable save",global.session.save_campaign() && is_struct(global.session.campaign_request));
             global.fixture_stage=3;
@@ -372,6 +460,7 @@ function transport_test_step() {
     case 4:
         if(global.fixture_commands==1 && global.fixture_input_ack){
             fixture_expect("actual session applies the authoritative input once",global.session.applied_command_id>0 && global.session.battle_started);
+            fixture_expect("real authoritative input requests low-latency snapshot",global.coop_battle.snapshot_requested);
             fixture_expect("session emits a standard JSON snapshot",global.session.send_snapshot({test_label:"中文快照",flame:123}));
             global.fixture_stage=5;
         }break;
