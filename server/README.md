@@ -3,10 +3,19 @@
 This Python service stores co-op rooms, two player identities, campaign profiles,
 input commands, checkpoints and match results on the host Mac. The host GameMaker
 client runs the authoritative battle simulation; the guest sends permitted inputs
-and renders host snapshots. The first co-op mode shares campaign progress, card
-decks and battlefield resources, with two independently controlled avatars.
+and renders host snapshots. Co-op shares campaign progress and the host's unlocked
+card library. Each player selects a separate deck and controls an avatar, with
+independent card cooldowns and flame balances. Both must confirm their decks before
+the host can start a match.
 Both identities have separate persisted profile rows, even when their shared
 campaign snapshots are identical. Existing single-player save files are untouched.
+
+Update both game clients and the installed service together. The wire envelope
+remains protocol 1, and new state replies advertise
+`features.personal_loadouts:true`. The new client requires this feature; the new
+server rejects the old direct `start_match` flow. Updating the checkout does not
+update the installed LaunchAgent service; rerun `manage.py install` after ending
+the current session, as described below.
 
 ## Run on the host Mac
 
@@ -54,7 +63,8 @@ have `{v:1, type:"...", request_id:"...", ...}`. Replies repeat `request_id`; ev
 omit it. Every message has `v:1`. Integer-valued JSON numbers such as `1.0` from
 GameMaker are accepted; booleans, fractional values and non-finite values are not.
 Use a random session prefix plus a counter for request IDs. Retry a campaign
-transaction with the **same ID**; never reuse that ID for a different operation.
+transaction or preparation operation with the **same ID**; never reuse that ID
+for a different operation, including after reconnecting or restarting a client.
 
 Authenticate within 5 seconds using exactly one of these first messages:
 
@@ -77,12 +87,14 @@ restarts; the newest connection replaces the previous connection for that identi
 After `auth_host`, send:
 
 ```json
-{"v":1,"type":"create_room","request_id":"session-a:1","name":"Our campaign","player_name":"Host","profile":{"coins":100,"cards":[]}}
+{"v":1,"type":"create_room","request_id":"session-a:1","name":"Our campaign","player_name":"Host","profile":{"player":{"name":"Host","total_time":0},"unlocked_cards":[{"id":"small_fire","level":1,"shape":0},{"id":"toast_bread","level":1,"shape":0}],"unlocked_items":{"max_slot":2}}}
 ```
 
 Reply: `room_created {room_id,player_id,role:"host",resume_token,invite_token,
 invite_expires_at,state}`. The guest's initial profile is copied from the host's
 shared campaign profile when joining. Store each device's resume token privately.
+This abbreviated profile illustrates the server's library fields; the game sends
+its complete save data so that game-side validation and campaign rules can run.
 
 ## Room and campaign operations
 
@@ -92,8 +104,11 @@ shared campaign profile when joining. Store each device's resume token privately
 | `ping {}` | `pong {server_time}`; use application heartbeats to detect lost GameMaker connections |
 | `leave {}` | `left`, then closes the connection; progress and seat persist |
 | Host `refresh_invite {}` | `invite_created {room_id,invite_token,invite_expires_at}`; only before the guest seat is occupied |
-| Host `save_campaign {profiles,revisions?}` | `campaign_saved {committed:true,duplicate,profiles}`; commits outside an active match only |
-| Host `start_match {level_id,config?:{},profiles?}` | `match_started {match_id,state}`; both players must be connected |
+| Host `save_campaign {profiles,revisions?}` | `campaign_saved {committed:true,duplicate,profiles,state}`; commits outside an active match only |
+| Host `prepare_match {level_id,level_name?,slot_limit}` | `loadout_state {state,duplicate}`; opens a new preparation for the room's two members |
+| Either player `set_loadout {preparation_id,revision,deck,ready}` | `loadout_state {state,duplicate}`; edits only the sender's selection |
+| Host `cancel_preparation {preparation_id,revision}` | `loadout_state {state,duplicate}` with `state.preparation:null` |
+| Host `start_match {level_id,preparation_id,revision,config?:{}}` | `match_started {match_id,state,duplicate}`; requires both players connected and ready |
 | Local admin `backup {}` | `backup_created {filename}` |
 
 `new_invite` is an alias returning `room_invite`. `profiles` in requests maps every
@@ -107,15 +122,89 @@ Campaign saves atomically update every supplied profile and persist request-ID
 deduplication before acknowledging. Replaying the same transaction returns its
 original committed response with `duplicate:true`. Reusing that ID with a different
 payload returns `request_conflict`. Guest receives `campaign_updated {profiles}`.
-Starting a match optionally commits both supplied profiles, resets both input
-sequences to zero and persists a newly generated `match_id`.
+Actual campaign changes clear both ready flags and refresh valid cards/slot limits
+in any active preparation, increment its revision, and broadcast `loadout_state`.
+Changes only to `player.total_time` preserve readiness. Campaign saves remain
+available while preparing because preparation does not change `room_status`.
+
+## Individual loadouts and mutual readiness
+
+The host's authoritative profile defines the shared library through
+`unlocked_cards:[{id,level,shape,...}]` and the per-player slot limit through
+`unlocked_items.max_slot` (protocol bound 1–31). `prepare_match.slot_limit` is
+validated but never overrides the authoritative limit. Both room members must
+already exist. A preparation is stored durably and returned by `get_state`:
+
+```json
+{
+  "id":"PREPARATION_ID","level_id":"1-1","level_name":"First level",
+  "slot_limit":2,"revision":1,
+  "selections":{
+    "HOST_PLAYER_ID":{"deck":["small_fire"],"ready":false,"cached":true},
+    "GUEST_PLAYER_ID":{"deck":["toast_bread"],"ready":false,"cached":true}
+  }
+}
+```
+
+Each accepted `set_loadout` validates an ordered array of unique, unlocked card ID
+strings. An unready deck may be empty; a ready deck requires 1–`slot_limit` cards.
+The two players may select the same card. Every accepted edit saves that player's
+deck under the room, player and level, and increments the shared preparation
+revision. Changing a deck clears both ready flags before applying the sender's
+explicit `ready` value. The game sends `ready:false` while editing, then a separate
+confirmation with `ready:true`.
+
+`set_loadout`, `cancel_preparation` and `start_match` require the current
+`preparation_id` and `revision`. An old ID returns `stale_preparation`; an old
+revision returns `preparation_conflict`. Both errors include current `state`.
+Concurrent confirmations can therefore require a retry against the new revision.
+The client must not restore a previous ready confirmation if either player's deck,
+the level, slot limit or campaign library has changed.
+
+On a new preparation, each player's last deck for this level is restored; if there
+is no level-specific cache, their most recently edited deck is used. Unavailable
+cards are filtered and the restored list is clamped to the current slot limit.
+`cached:true` indicates a restored cache, including one filtered to an empty deck.
+Ready flags are never restored. Disconnect, connection takeover and server restart
+clear both players' ready flags and advance the revision, retaining the decks.
+
+Preparation changes and their request-ID receipts commit in the same transaction.
+A duplicate accepted request returns current state with `duplicate:true` without
+reapplying an old edit, cancellation or preparation. Changed data under the same
+ID returns `request_conflict`. A duplicate accepted start returns the same match
+while it remains the room's current match, including after a server restart; an
+older match's start receipt returns `stale_preparation`.
+
+The server never starts automatically. `start_match` additionally requires the
+prepared level, two connected players, two ready flags and two valid nonempty
+decks. It freezes these server-owned config fields, ignoring supplied overrides:
+
+```json
+{
+  "level_id":"1-1","preparation_id":"PREPARATION_ID",
+  "loadouts":{"HOST_PLAYER_ID":["small_fire"],"GUEST_PLAYER_ID":["toast_bread"]},
+  "per_player_loadouts":true,"flame_ratio":0.6,"shared_campaign":true
+}
+```
+
+Start persists a new `match_id`, resets input sequences, and clears the active
+preparation. It does not mutate campaign profiles. Clients should omit the legacy
+`profiles` field; if supplied, it must equal the stored profiles except play time,
+otherwise `profiles_changed` is returned. Campaign mutations go through
+`save_campaign` before preparing. After a match, a new preparation restores cached
+decks and requires fresh confirmation from both players.
+
+The game host enforces individual card ownership, cooldowns and spending. Each
+player gets `floor(value * 0.6)` of the level's initial flame and each collected
+flame award, capped at 15,000 per player. Spending affects the acting player's
+balance. Other campaign resources, unlocks and rewards remain shared.
 
 ## Battle commands
 
 Both host and guest submit:
 
 ```json
-{"v":1,"type":"input","request_id":"session-b:9","match_id":"MATCH_ID","seq":1,"action":"place_card","payload":{"row":2,"col":3,"card_id":"sunflower","slot_index":0}}
+{"v":1,"type":"input","request_id":"session-b:9","match_id":"MATCH_ID","seq":1,"action":"place_card","payload":{"row":2,"col":3,"card_id":"toast_bread","slot_index":1}}
 ```
 
 The server returns `input_ack {seq,command_id,duplicate}` **after** committing the
@@ -135,7 +224,8 @@ The guest never mutates authoritative battle state directly.
 
 Rows are `0..63`, columns `0..127`, slot/gem indices `0..31`, shape `0..32`.
 `deck_slot` is a compatibility alias accepted as an optional field; the game
-integration should use `slot_index`. Coordinates are logical grid cells; host
+integration uses the owner's **1-based** `slot_index` from the snapshot, while
+`gem_index` is zero-based. Coordinates are logical grid cells; host
 simulation translates moving-platform coordinates using its own authoritative
 platform offset. IDs match `[A-Za-z0-9_.:-]{1,80}`. Unknown fields/actions are rejected.
 
@@ -162,6 +252,11 @@ the current match or be zero. Identical repeated snapshots are idempotent. A
 `state` object is opaque to the service; the host must include enough simulation
 state for any recovery it promises. A rendering-only snapshot cannot restore a
 complete host simulation after the game itself crashes.
+
+The current game snapshot includes `per_player_loadouts:true`,
+`balances:{player_id:flame}`, and `slots` with an `owner` player ID and that owner's
+1-based `slot_index`. The guest filters slots and reads the balance by its own
+identity. The top-level legacy `flame` field remains the host's balance.
 
 Broadcasts can run at 10–15 Hz. The first snapshot is durable, subsequent updates
 are cached in memory and flushed at most approximately every second during normal
@@ -196,12 +291,15 @@ State has this exact shape:
   "match_id":"MATCH_ID","level_id":"1-1","config":{},
   "players":[{"player_id":"PLAYER_ID","role":"host","name":"Host","profile":{},"revision":1,"last_seq":0,"connected":true}],
   "checkpoint":{"tick":120,"applied_command_id":3,"state":{}},
-  "pending_commands":[],"pending_commands_more":false,"result":null
+  "pending_commands":[],"pending_commands_more":false,"result":null,
+  "features":{"personal_loadouts":true},"preparation":null
 }
 ```
 
 `room_status` is `lobby`, `running` or `finished`; `match_id`, `level_id`,
-`checkpoint` and `result` can be null. `pending_commands` are commands after the
+`checkpoint`, `result` and `preparation` can be null. Preparation is separate from
+the prior match's `level_id` and `config`; use `preparation.level_id` when selecting
+the next level. It is cleared during a running match. `pending_commands` are commands after the
 checkpoint's applied ID, or after explicitly requested `after_command_id`, ordered
 by command ID. Each has the same fields as a `command` event. Pages hold at most
 256; use the last command ID as the next cursor when `pending_commands_more` is
@@ -253,11 +351,22 @@ tokens are bearer credentials and should be shared only with the invited player.
 The server trusts authenticated host simulation; it does not independently verify
 game balance or prevent a host administrator from changing their own database.
 
-The ten server tests exercise real socket clients, authorization, one-use/expired invitations,
+The 16 server integration tests exercise real socket clients, authorization, one-use/expired invitations,
 role restrictions, sequence deduplication, snapshots, presence/resume, forced
 process restart, durable campaign writes, duplicate results, transaction rollback,
 safe HTTP routes, frame limits, consistent backups, application heartbeats and
-silent authenticated-client expiry.
+silent authenticated-client expiry. New cases also cover authoritative card/slot
+validation, readiness and revision conflicts, independent level caches and last
+deck fallback, disconnect/takeover/restart invalidation, immutable match config,
+duplicate start receipts across restarts, transaction rollback of edits and their
+receipts, campaign changes versus play time, and additive migration of existing
+rooms. The schema adds preparation/cache/receipt tables and advances to version 2
+without replacing profiles, rooms, matches or credentials.
+
+The new protocol has also passed 38/38 checks from a real native GameMaker client
+and 96/96 `CoopSession` native checks using isolated projects and databases. Full
+game regression for the individual-loadout revision is still in progress; these
+checks do not establish two-machine or all-level gameplay acceptance.
 
 ## Optional Mac login service and free external connectivity
 
