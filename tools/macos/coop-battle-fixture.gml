@@ -168,6 +168,18 @@ function bridge_run() {
     global.coop.match_config.loadouts.guest=["fixture-card","guest-card"];
     global.coop_battle.slots_ready=true;
 
+    var _latency_count=global.bridge_snapshots;
+    global.coop_battle.last_snapshot=current_time;
+    global.coop_battle.snapshot_requested=true;
+    coop_battle_tick();
+    bridge_expect("confirmed command publishes next step without waiting for periodic timer",
+        global.bridge_snapshots==_latency_count+1 && !global.coop_battle.snapshot_requested);
+    bridge_expect("snapshot advertises a short interpolation interval",global.bridge_last_snapshot.snapshot_interval_ms==33);
+    _latency_count=global.bridge_snapshots;
+    global.coop_battle.last_snapshot=current_time-40;
+    coop_battle_tick();
+    bridge_expect("regular movement frames no longer wait one hundred milliseconds",global.bridge_snapshots==_latency_count+1);
+
     var _over = instance_create_depth(0,0,0,obj_game_over); _over.sprite_index = spr_win;
     var _ui = instance_find(obj_battle_pause_manager,0);
     _ui.rewards_committed = false; _ui.victory_started = false;

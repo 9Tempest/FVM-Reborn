@@ -156,7 +156,7 @@ function coop_world_from_grid(_row, _col) {
 function coop_battle_begin() {
     if (!coop_battle_host()) return;
     global.coop_battle = {ready:false, last_seq:-1, last_seqs:{}, last_snapshot:-1000, result_sent:false, start_requested:false, start_retry_at:current_time + 500, pause_votes:{}, owners:[],
-        balances:{}, balances_ready:false, previous_cards:{}, slots_ready:false};
+        balances:{}, balances_ready:false, previous_cards:{}, slots_ready:false, snapshot_requested:false};
     global.is_paused = true;
     game_set_speed(60, gamespeed_fps);
     obj_battle.speed_up = false;
@@ -273,7 +273,7 @@ function coop_battle_snapshot() {
     static _ui_objects = [obj_card_slot,obj_shovel_slot,obj_game_over,obj_card_preview,obj_boss_hpbar,
         obj_flame_manager,obj_world_map_button,obj_level_progress_bar,obj_battle_timer_display,obj_battle_pause_manager,obj_player_info_ui];
     var _state = {background:{sprite:coop_snapshot_sprite(global.level_data.level_sprite),frame:obj_battle.map_spr_index},
-        entities:[], slots:[], gems:[], players:[], platforms:[], bosses:[], audio:coop_audio_snapshot(),
+        entities:[], slots:[], gems:[], players:[], platforms:[], bosses:[], audio:coop_audio_snapshot(),snapshot_interval_ms:33,
         grid:{offset_x:global.grid_offset_x,offset_y:global.grid_offset_y,cell_x:global.grid_cell_size_x,cell_y:global.grid_cell_size_y,cols:global.grid_cols,rows:global.grid_rows},
         flame:global.flame,balances:global.coop_battle.balances,per_player_loadouts:coop_personal_loadouts(),paused:global.is_paused,pause_votes:global.coop_battle.pause_votes,game_over:global.game_over,outcome:"",level_name:global.level_data.name,
         battle_time:obj_battle.battle_time,time_limit:obj_battle.time_limit,wave:obj_battle.current_wave,total_waves:obj_battle.total_wave,
@@ -391,7 +391,11 @@ function coop_battle_tick() {
     }
     global.is_paused = !coop_battle_can_run();
     if (!global.coop.battle_started) return;
-    if (!global.coop_battle.result_sent && current_time - global.coop_battle.last_snapshot >= 100) {
+    // Publish confirmed inputs on the next game step; batch simultaneous inputs
+    // into one frame and keep regular movement updates at approximately 30 Hz.
+    if (!global.coop_battle.result_sent && ((variable_struct_exists(global.coop_battle,"snapshot_requested") && global.coop_battle.snapshot_requested)
+        || current_time - global.coop_battle.last_snapshot >= 33)) {
+        global.coop_battle.snapshot_requested = false;
         global.coop_battle.last_snapshot = current_time;
         global.coop.send_snapshot(coop_battle_snapshot());
     }

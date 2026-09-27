@@ -122,9 +122,14 @@ function CoopTransport(_on_event = undefined) constructor {
         if (state != "open" || socket < 0) return false;
         var _text;
         try {
-            _text = is_string(_message) ? _message : json_stringify(_message);
-            // Accept an existing JSON text unchanged, but reject malformed text.
-            json_parse(_text);
+            if (is_string(_message)) {
+                // Caller-supplied JSON must still be validated.
+                _text = _message; json_parse(_text);
+            } else {
+                // GameMaker's serializer already produces valid JSON. Parsing
+                // the entire snapshot again adds work to every outgoing frame.
+                _text = json_stringify(_message);
+            }
         } catch (_parse_error) {
             _error("invalid_json", "Outgoing message must be valid JSON");
             return false;
