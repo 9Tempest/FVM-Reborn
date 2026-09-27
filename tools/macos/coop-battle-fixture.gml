@@ -61,6 +61,8 @@ function bridge_run() {
     bridge_expect("out-of-grid placement rejected", !coop_battle_command(bridge_packet("host","place_card",{row:6,col:2,slot_index:1,card_id:"fixture-card"})));
     coop_battle_command(bridge_packet("guest","pause_vote",{paused:true}));
     bridge_expect("either player can pause", global.is_paused && !coop_battle_can_run());
+    var _paused_state = coop_battle_snapshot();
+    bridge_expect("pause votes identify the player in the snapshot", _paused_state.pause_votes[$ "guest"] && !_paused_state.pause_votes[$ "host"]);
     bridge_expect("paused battle rejects planting", !coop_battle_command(bridge_packet("host","place_card",{row:2,col:2,slot_index:1,card_id:"fixture-card"})));
     coop_battle_command(bridge_packet("guest","pause_vote",{paused:false}));
     global.coop.players[1].connected = false;
@@ -86,6 +88,10 @@ function bridge_run() {
     _boss_bar.target_boss = _battle; _boss_bar.boss_id = ""; _boss_bar.boss_name = "Fixture Boss";
     _boss_bar.icon_spr = spr_win; _boss_bar.bar_width = 1200;
     var _snapshot = coop_battle_snapshot();
+    bridge_expect("gem display name safely falls back without metadata", _snapshot.gems[0].name == "fixture-gem");
+    _gem.gem_info = {name:"激光宝石"};
+    _snapshot = coop_battle_snapshot();
+    bridge_expect("gem snapshot preserves the localized display name", _snapshot.gems[0].name == "激光宝石");
     bridge_expect("snapshot contains shared HUD and stable sprite names", _snapshot.flame == 250 && _snapshot.slots[0].sprite == "spr_win" && _snapshot.players[1].player_id == "guest" && _snapshot.slots[0].preview == "");
     bridge_expect("entities are sorted back to front", array_length(_snapshot.entities) == 2 && _snapshot.entities[0].depth == 100 && _snapshot.entities[1].depth == -100);
     bridge_expect("enemy maxhp and transient effects survive snapshot", _snapshot.entities[0].max_hp == 500 && array_length(_snapshot.entities[0].effects) == 3 && _snapshot.entities[0].flash_alpha == 0.5 && _snapshot.entities[0].flash_shader == "hit_effect_2");

@@ -169,7 +169,7 @@ function coop_battle_snapshot() {
     var _state = {background:{sprite:coop_snapshot_sprite(global.level_data.level_sprite),frame:obj_battle.map_spr_index},
         entities:[], slots:[], gems:[], players:[], platforms:[], bosses:[],
         grid:{offset_x:global.grid_offset_x,offset_y:global.grid_offset_y,cell_x:global.grid_cell_size_x,cell_y:global.grid_cell_size_y,cols:global.grid_cols,rows:global.grid_rows},
-        flame:global.flame,paused:global.is_paused,game_over:global.game_over,outcome:"",level_name:global.level_data.name,
+        flame:global.flame,paused:global.is_paused,pause_votes:global.coop_battle.pause_votes,game_over:global.game_over,outcome:"",level_name:global.level_data.name,
         battle_time:obj_battle.battle_time,wave:obj_battle.current_wave,total_waves:obj_battle.total_wave,
         waiting:!global.coop_battle.ready || !coop_battle_can_run(),connected:global.coop.all_connected(),last_seq:global.coop_battle.last_seq};
     for (var _i = 0; _i < instance_number(all); _i++) {
@@ -231,7 +231,9 @@ function coop_battle_snapshot() {
     for (var _i = 0; _i < instance_number(all); _i++) {
         var _g = instance_find(all, _i);
         if (variable_instance_exists(_g,"coop_gem_index") && _g.coop_gem_index >= 0) {
-            array_push(_state.gems, {gem_index:_g.coop_gem_index,gem_id:_g.gem_id,active:variable_instance_exists(_g,"try_use_gem"),x:_g.x,y:_g.y,sprite:coop_snapshot_sprite(_g.sprite_index),frame:0,cooldown:_g.cooldown,remaining_cd:max(0,_g.cooldown_timer)});
+            var _name = _g.gem_id;
+            if (variable_instance_exists(_g,"gem_info") && is_struct(_g.gem_info) && variable_struct_exists(_g.gem_info,"name")) _name = _g.gem_info.name;
+            array_push(_state.gems, {gem_index:_g.coop_gem_index,gem_id:_g.gem_id,name:_name,active:variable_instance_exists(_g,"try_use_gem"),x:_g.x,y:_g.y,sprite:coop_snapshot_sprite(_g.sprite_index),frame:0,cooldown:_g.cooldown,remaining_cd:max(0,_g.cooldown_timer)});
         }
     }
     for (var _i = 0; _i < instance_number(obj_platform); _i++) {
