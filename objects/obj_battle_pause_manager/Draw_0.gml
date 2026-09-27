@@ -122,7 +122,8 @@ if (victory_started) {
 	draw_set_alpha(_intro)
 	draw_set_colour(_hover ? make_colour_rgb(255, 222, 152) : _gold)
 	draw_roundrect_ext(1430, 942, 1710, 1012, 18, 18, false)
-	victory_text(1570, 977, !_ready ? "跳过动画" : (victory_page < victory_pages - 1 ? "下一页" : "返回地图"), 1.15, make_colour_rgb(37, 37, 32), _intro, fa_center, 240)
+	var _exit_label = coop_is_active() ? (global.coop.result_saved ? "回到合作房间" : "等待存档确认") : "返回地图"
+	victory_text(1570, 977, !_ready ? "跳过动画" : (victory_page < victory_pages - 1 ? "下一页" : _exit_label), 1.15, make_colour_rgb(37, 37, 32), _intro, fa_center, 240)
 	draw_set_alpha(1)
 	draw_set_colour(c_white)
 	draw_set_halign(fa_left)
