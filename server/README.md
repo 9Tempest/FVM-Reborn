@@ -414,9 +414,29 @@ The new protocol has also passed 38/38 checks from a real native GameMaker clien
 and 122/122 `CoopSession` native checks using isolated projects and databases.
 The native loadout UI has passed 23/23 checks and shared-screen/codec fixtures
 27/27. Two isolated full-game clients on one Mac have passed 52/52 local WS checks,
-including actual menu/map/laboratory image sharing and battle settlement. Final
-public WSS full-game regression for this revision is still in progress; these
-checks do not establish two-machine or all-level gameplay acceptance.
+including actual menu/map/laboratory image sharing and battle settlement. The final
+public WSS full-game run passed 53/53, including the completed screen-clear
+protocol. These checks do not establish two-machine or all-level gameplay acceptance.
+
+The [coop.3 release](https://github.com/9Tempest/FVM-Reborn/releases/tag/v2.4.1-macos-coop.3)
+is frozen at source/tag commit `de21cb6e5f3e9975c049666fcb52a9b40714c2de`.
+Its 980,321,915-byte ZIP was downloaded from GitHub and passed SHA-256, ZIP CRC,
+strict extracted-app signature, exact sandbox entitlements, universal-architecture
+and build-manifest hash checks, with no injected test fixture. SHA-256:
+
+```text
+f6d93fb1d568cc3cdb2a1c8a54d84f1ae4e469ae4187ec65622608b997510a33
+```
+
+The downloaded app was installed and opened normally on the validation Mac after
+the standard system prompt for access to its prior app data. It loaded the existing
+level-4 save, retained all solo progress apart from elapsed play time, and produced
+no new crash report during this startup check; the actual difficulty setting was 3.
+The host's installed service was also updated and authenticated over public WSS,
+with existing profiles, identities and database row counts preserved. This is a
+verified upgrade on the validation Mac; other hosts must still update their own
+installed service. Later documentation commits record these results without
+changing the frozen release tag or binary.
 
 ## Optional Mac login service and free external connectivity
 
