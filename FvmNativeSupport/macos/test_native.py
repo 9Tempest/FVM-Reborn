@@ -63,6 +63,14 @@ class NativeIntegrationTests(unittest.TestCase):
         self.assertEqual(set(architectures.split()), {"arm64", "x86_64"})
         subprocess.run(["codesign", "--verify", "--strict", str(LIBRARY_PATH)], check=True)
 
+    def test_background_activity_lifecycle_preserves_normal_sleep(self):
+        executable = self.root / "activity-test"
+        source = Path(__file__).with_name("test_activity.mm")
+        subprocess.run(["xcrun", "clang++", "-std=c++17", "-fobjc-arc", "-Wall", "-Wextra", "-Werror",
+                        "-arch", platform.machine(), str(source), "-framework", "Foundation", "-o", str(executable)], check=True)
+        output = subprocess.check_output([str(executable), str(LIBRARY_PATH), str(self.root / "native.log")], text=True)
+        self.assertIn("activity_begin=1 activity_end=1 normal_idle_sleep_allowed=yes", output)
+
     def test_all_exports_accept_their_abi(self):
         for name in SIGNATURES:
             if name in ("DisableIme", "EnableIme"):

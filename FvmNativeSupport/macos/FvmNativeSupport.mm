@@ -37,6 +37,38 @@ struct Failure : std::runtime_error {
 };
 std::mutex log_mutex;
 std::string log_path;
+
+// The host continues serving a co-op match when another application is in front.
+// This is a process-scoped scheduling hint, not a global power preference or an
+// idle/display-sleep assertion. Keep the existing Windows-compatible ABI.
+class GameActivity {
+  std::mutex mutex_;
+  __strong id token_ = nil;
+public:
+  void begin() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!token_) {
+      token_ = [[NSProcessInfo processInfo]
+        beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep
+        reason:@"FVM Reborn cooperative game hosting and networking"];
+    }
+  }
+  ~GameActivity() {
+    @autoreleasepool {
+      @try {
+        if (token_) [[NSProcessInfo processInfo] endActivity:token_];
+        token_ = nil;
+      } @catch (NSException *) {
+        // Process shutdown must never throw across the runtime's destructors.
+      }
+    }
+  }
+};
+GameActivity &game_activity() {
+  static GameActivity activity;
+  return activity;
+}
+
 constexpr uint64_t kMaxBackupBytes = 256ull * 1024 * 1024;
 constexpr uint64_t kMaxArchiveBytes = 2ull * 1024 * 1024 * 1024;
 constexpr uint64_t kMaxArchiveFileBytes = 512ull * 1024 * 1024;
@@ -372,7 +404,13 @@ double SetNativeLogFilePath(const char *value) {
   return invoke(__func__, [&] {
     fs::path path = path_arg(value); reject_link(path);
     fs::create_directories(path.parent_path());
-    std::lock_guard<std::mutex> lock(log_mutex); log_path = path.string(); return Ok;
+    {
+      std::lock_guard<std::mutex> lock(log_mutex);
+      log_path = path.string();
+    }
+    // Called by the existing game startup path; repeated logger setup is safe.
+    game_activity().begin();
+    return Ok;
   });
 }
 double OpenFolder(const char *value) {

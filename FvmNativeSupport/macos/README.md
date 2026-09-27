@@ -55,6 +55,20 @@ contexts. The macOS project uses GameMaker's Cocoa text input and guards those
 Windows-only calls. No keyboard layout, global input source, other application's
 window, or Cocoa text input context is modified.
 
+The existing `SetNativeLogFilePath` startup call also begins one process-scoped
+Foundation activity with `NSActivityUserInitiatedAllowingIdleSystemSleep`. It keeps
+the initialized game eligible for normal background scheduling while hosting a
+co-op session, and the token is ended at process shutdown. Repeated logger setup
+does not create duplicate activities. This does not change system preferences,
+prevent normal idle system/display sleep, or introduce a new Windows ABI symbol.
+It improves background scheduling reliability; it is not a claim to fix GameMaker
+WebSocket protocol errors or accessibility timeouts. A separate native subprocess
+test observes the real Foundation begin/end calls and checks that the activity
+does not request idle-system or display-sleep prevention.
+
+Apple documents this API as the scoped way to prevent App Nap for user-initiated
+work: [Prioritize Work at the App Level](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/PrioritizeWorkAtTheAppLevel.html).
+
 Apple's Command Line Tools SDK does not ship libarchive headers. The public
 headers and small RAR test fixtures in `vendor/libarchive/` are from upstream
 libarchive **v3.5.3** (https://github.com/libarchive/libarchive/tree/v3.5.3), with the
