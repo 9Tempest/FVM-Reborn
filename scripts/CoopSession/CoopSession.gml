@@ -37,6 +37,14 @@ function coop_write_json(_path, _data) {
 function coop_is_active() {
     return variable_global_exists("coop") && is_struct(global.coop) && global.coop.active;
 }
+function coop_campaign_progress(_json) {
+    if (_json=="") return "";
+    try {
+        var _profile=json_parse(_json);
+        if (is_struct(coop_get(_profile,"player"))) _profile.player.total_time=0;
+        return json_stringify(_profile);
+    } catch (_error) { return _json; }
+}
 function CoopSession() constructor {
     transport = new CoopTransport();
     transport.idle_timeout_ms = 15000;
@@ -75,6 +83,7 @@ function CoopSession() constructor {
     last_ping = 0;
     last_campaign_check = 0;
     campaign_json = "";
+    campaign_committed_at = current_time;
     campaign_pending_json = "";
     campaign_request = undefined;
     result_request = undefined;
@@ -140,6 +149,7 @@ function CoopSession() constructor {
         global.total_time = global.save_data.player.total_time;
         global.save_last_progress = save_progress_json();
         campaign_json = json_stringify(global.save_data);
+        campaign_committed_at = current_time;
         return true;
     };
     static profiles = function() {
@@ -344,7 +354,7 @@ function CoopSession() constructor {
             break;
         case "campaign_saved":
             if (is_struct(campaign_request) && coop_get(_p,"request_id","") == campaign_request.request_id) {
-                campaign_json = campaign_pending_json; campaign_request = undefined;
+                campaign_json = campaign_pending_json; campaign_request = undefined; campaign_committed_at = current_time;
                 status = "共同进度已保存到主机"; remember();
             }
             break;
@@ -355,7 +365,7 @@ function CoopSession() constructor {
                 var _profile = coop_get(_committed,"profile");
                 if (is_struct(_profile)) campaign_json = json_stringify(_profile);
                 else if (is_struct(result_request)) campaign_json = json_stringify(coop_get(result_request.profiles,player_id,global.save_data));
-                result_request = undefined;
+                result_request = undefined; campaign_committed_at = current_time;
                 status = "通关数据已保存到主机"; remember();
             }
             break;
@@ -437,6 +447,10 @@ function CoopSession() constructor {
         if (room_status == "running") return true;
         var _j = json_stringify(global.save_data);
         if (_j == campaign_json) return true;
+        // The play timer changes every Step. It must not continually enqueue
+        // new transactions and prevent start_match from ever reaching its ACK.
+        if (coop_campaign_progress(_j)==coop_campaign_progress(campaign_json)
+            && current_time-campaign_committed_at<30000) return true;
         if (is_struct(campaign_request)) return outbox_durable || remember();
         campaign_pending_json = _j;
         campaign_request = request("save_campaign",{profiles:profiles()});

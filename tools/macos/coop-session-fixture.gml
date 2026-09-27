@@ -134,6 +134,33 @@ function fixture_units() {
     fixture_expect("synchronous send failure schedules retry on Step",!_failed.connected && _failed.retry_at>current_time && _failed.reconnect_attempt==1);
     _failed.tick();
     fixture_expect("one synchronous send failure is consumed once",_failed.reconnect_attempt==1);
+    // Regression: the world map increments play time every Step. Campaign ACKs
+    // must leave a window in which the host can actually send start_match.
+    fixture_globals(100);
+    var _timed=fixture_unit_session();var _sent_before=array_length(global.fixture_sent);
+    var _clock_only_ok=true;
+    for(var _frame=0;_frame<120;_frame++){
+        global.save_data.player.total_time+=1/60;
+        _clock_only_ok=_timed.save_campaign() && !is_struct(_timed.campaign_request) && _clock_only_ok;
+    }
+    fixture_expect("continuous play-clock changes do not enqueue campaign transactions",_clock_only_ok && array_length(global.fixture_sent)==_sent_before);
+    fixture_expect("continuous play clock does not prevent starting a match",_timed.start_battle("clock-regression") && !is_struct(_timed.campaign_request));
+    var _start=global.fixture_sent[array_length(global.fixture_sent)-1];
+    fixture_expect("start request still includes the latest play time",_start.type=="start_match" && variable_struct_get(_start.profiles,"host-test").player.total_time==global.save_data.player.total_time);
+    _timed.campaign_committed_at=current_time-29999;
+    fixture_expect("clock-only save waits until the 30-second deadline",_timed.save_campaign() && !is_struct(_timed.campaign_request));
+    _timed.campaign_committed_at=current_time-30000;
+    fixture_expect("clock-only save becomes durable at 30 seconds",_timed.save_campaign() && is_struct(_timed.campaign_request) && _timed.outbox_durable);
+    fixture_expect("periodic clock save contains the complete latest profile",variable_struct_get(_timed.campaign_request.profiles,"host-test").player.total_time==global.save_data.player.total_time && variable_struct_get(_timed.campaign_request.profiles,"host-test").coins==100);
+    var _clock_id=_timed.campaign_request.request_id;global.save_data.player.total_time+=1/60;
+    _timed.packet({type:"campaign_saved",request_id:_clock_id});
+    fixture_expect("clock save ACK resets debounce despite another clock tick",current_time-_timed.campaign_committed_at<1000 && _timed.save_campaign() && !is_struct(_timed.campaign_request));
+    fixture_expect("start can proceed immediately after a clock-only ACK",_timed.start_battle("clock-after-ack") && !is_struct(_timed.campaign_request));
+    global.save_data.coins=90;global.save_data.cards=["new-card"];
+    fixture_expect("purchase and deduction bypass the clock debounce immediately",_timed.save_campaign() && is_struct(_timed.campaign_request) && variable_struct_get(_timed.campaign_request.profiles,"host-test").coins==90 && variable_struct_get(_timed.campaign_request.profiles,"host-test").cards[0]=="new-card");
+    _timed.packet({type:"campaign_saved",request_id:_timed.campaign_request.request_id});
+    global.save_data.player.name="改名即时保存";global.save_data.player.total_time+=1/60;
+    fixture_expect("other player fields are not hidden by timer-only debounce",_timed.save_campaign() && is_struct(_timed.campaign_request) && variable_struct_get(_timed.campaign_request.profiles,"host-test").player.name=="改名即时保存");
     // Clear only this unique test app's credentials before the live protocol test.
     for(var _i=0;_i<3;_i++) {var _path=["coop/session.json","coop/session.json.pending","coop/session.json.bak"][_i];if(file_exists(_path))file_delete(_path);}
 }
@@ -187,6 +214,7 @@ function transport_test_start() {
 }
 function transport_test_step() {
     if(global.fixture_done)return;
+    global.save_data.player.total_time+=1/60;global.total_time=global.save_data.player.total_time;
     global.session.tick();global.fixture_peer.tick();
     if(current_time>global.fixture_deadline){fixture_expect("live session completes before deadline (stage "+string(global.fixture_stage)+")",false);fixture_finish();return;}
     switch(global.fixture_stage){
@@ -204,6 +232,7 @@ function transport_test_step() {
     case 3:
         if(!is_struct(global.session.campaign_request)){
             fixture_expect("actual campaign ACK updates session baseline",json_parse(global.session.campaign_json).coins==120);
+            fixture_expect("real Step clock advances beyond the acknowledged campaign",global.save_data.player.total_time>json_parse(global.session.campaign_json).player.total_time);
             fixture_expect("session can start after campaign ACK",global.session.start_battle("session-test-level"));
             global.fixture_stage=4;
         }break;
