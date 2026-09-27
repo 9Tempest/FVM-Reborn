@@ -148,7 +148,11 @@ asyncio.run(probe())
         token=(data/'host-token').read_text().strip()
         def launch(role,secret):
             log=(root/'logs'/f'{role}.log').open('wb');logs.append(log)
-            child=subprocess.Popen([str(apps[role]/'Contents/MacOS/Mac_Runner'),role,url,secret],cwd=root,stdout=log,stderr=subprocess.STDOUT)
+            info=plistlib.loads((apps[role]/'Contents/Info.plist').read_bytes())
+            executable=info['CFBundleExecutable']
+            if not executable or Path(executable).name!=executable:
+                raise RuntimeError('Packaged app has an invalid CFBundleExecutable')
+            child=subprocess.Popen([str(apps[role]/'Contents/MacOS'/executable),role,url,secret],cwd=root,stdout=log,stderr=subprocess.STDOUT)
             children.append(child);return child
         host=launch('host',token)
         print('Host started; waiting for texture/font loading and room invitation.',flush=True)
