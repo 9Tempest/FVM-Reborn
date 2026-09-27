@@ -76,3 +76,7 @@ x64/
 # Local macOS build output (source and the extension dylib remain tracked)
 /build/
 /FvmNativeSupport/macos/build/
+
+# Python verification helpers
+__pycache__/
+*.pyc
