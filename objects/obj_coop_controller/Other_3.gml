@@ -7,3 +7,4 @@ if (global.coop.active) {
 }
 global.coop.leaving=true;
 global.coop.transport.close();
+coop_audio_stop();

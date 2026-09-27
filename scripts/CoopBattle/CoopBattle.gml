@@ -167,7 +167,7 @@ function coop_snapshot_sprite(_sprite) {
 }
 function coop_battle_snapshot() {
     var _state = {background:{sprite:coop_snapshot_sprite(global.level_data.level_sprite),frame:obj_battle.map_spr_index},
-        entities:[], slots:[], gems:[], players:[], platforms:[], bosses:[],
+        entities:[], slots:[], gems:[], players:[], platforms:[], bosses:[], audio:coop_audio_snapshot(),
         grid:{offset_x:global.grid_offset_x,offset_y:global.grid_offset_y,cell_x:global.grid_cell_size_x,cell_y:global.grid_cell_size_y,cols:global.grid_cols,rows:global.grid_rows},
         flame:global.flame,paused:global.is_paused,pause_votes:global.coop_battle.pause_votes,game_over:global.game_over,outcome:"",level_name:global.level_data.name,
         battle_time:obj_battle.battle_time,wave:obj_battle.current_wave,total_waves:obj_battle.total_wave,
