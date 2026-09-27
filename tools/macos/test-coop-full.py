@@ -168,12 +168,14 @@ asyncio.run(probe())
         print('Guest started; waiting for the real shared battle and victory commit.',flush=True)
         deadline=time.monotonic()+450
         while any(p.poll() is None for p in children) and time.monotonic()<deadline:time.sleep(.5)
-        reports=[];images=[]
+        reports=[];images=[];latency=[];screen_metrics=[]
         for role in ['host','guest']:
             text=(root/'logs'/f'{role}.log').read_text(errors='replace')
             matches=re.findall(r'^FVM_FULL_ASSERT=(\d) (.+)$',text,re.M)
             reports += [{'name':role+': '+n,'passed':ok=='1'} for ok,n in matches]
             reports.append({'name':role+': process completed','passed':f'FVM_FULL_DONE={role}' in text})
+            latency += [{'role':role,'input_to_visible_ms':float(ms)} for ms in re.findall(r'^FVM_FULL_INPUT_VISIBLE_MS=(\d+(?:\.\d+)?)$',text,re.M)]
+            screen_metrics += [json.loads(metric) for metric in re.findall(r'^FVM_FULL_SCREEN_METRIC=(.+)$',text,re.M)]
             for image in re.findall(r'^FVM_FULL_IMAGE=(.+)$',text,re.M):
                 path=Path(image)
                 if path.is_file():
@@ -184,7 +186,7 @@ asyncio.run(probe())
         reports.append({'name':'both profiles persist the same completed campaign','passed':len(profiles)==2 and profiles[0]==profiles[1] and all('cookie_island' in p.get('completed_levels',[]) for p in profiles)})
         reports.append({'name':'both players have durable ordered placement commands','passed':db.execute("select count(distinct player_id) from commands where action='place_card'").fetchone()[0]==2})
         db.close()
-        result={'transport':'wss' if args.tunnel else 'ws','passed':sum(t['passed'] for t in reports),'total':len(reports),'tests':reports,'images':images}
+        result={'transport':'wss' if args.tunnel else 'ws','passed':sum(t['passed'] for t in reports),'total':len(reports),'tests':reports,'images':images,'latency_samples':latency,'screen_metrics':screen_metrics}
         (root/'results.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
         (root/('results-'+result['transport']+'.json')).write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
         print(json.dumps(result,ensure_ascii=False,indent=2),flush=True)
