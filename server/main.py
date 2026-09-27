@@ -45,10 +45,11 @@ class Client:
 
 
 class GameServer:
-    def __init__(self, store, invite_ttl=600, auth_timeout=5):
+    def __init__(self, store, invite_ttl=600, auth_timeout=5, idle_timeout=30):
         self.store = store
         self.invite_ttl = invite_ttl
         self.auth_timeout = auth_timeout
+        self.idle_timeout = idle_timeout
         self.clients = {}  # (room_id, player_id) -> authenticated live connection
         self.connections = set()
         self.live_checkpoints = {}
@@ -326,7 +327,7 @@ class GameServer:
             while True:
                 request = None
                 try:
-                    raw = await asyncio.wait_for(socket.recv(), self.auth_timeout if not client.authenticated else None)
+                    raw = await asyncio.wait_for(socket.recv(), self.auth_timeout if not client.authenticated else self.idle_timeout)
                     client.rate_limit()
                     request = decode(raw)
                     response, events = await self.dispatch(client, request)
@@ -344,7 +345,7 @@ class GameServer:
                         await socket.close(1008, "Protocol or authentication policy")
                         break
                 except asyncio.TimeoutError:
-                    await socket.close(1008, "Authentication timed out")
+                    await socket.close(1008, "Game heartbeat timed out" if client.authenticated else "Authentication timed out")
                     break
                 except (sqlite3.Error, OSError):
                     LOG.exception("Storage operation failed")
@@ -383,7 +384,7 @@ class GameServer:
 
 async def run(args):
     store = Store(args.data_dir)
-    app = GameServer(store, args.invite_ttl, args.auth_timeout)
+    app = GameServer(store, args.invite_ttl, args.auth_timeout, args.idle_timeout)
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):
@@ -406,7 +407,10 @@ async def run(args):
     try:
         async with serve(app.handler, "127.0.0.1", args.port, process_request=app.process_request,
                          max_size=MAX_MESSAGE, max_queue=16, compression=None,
-                         ping_interval=20, ping_timeout=20, close_timeout=3,
+                         # GameMaker LTS 2026 emits an unmasked control PONG, which
+                         # correctly triggers 1002 in an RFC-compliant server.
+                         # JSON ping/pong + bounded receive deadlines provide liveness.
+                         ping_interval=None, close_timeout=3,
                          server_header="FVM-Coop/1") as server:
             port = server.sockets[0].getsockname()[1]
             print(encode({"listening": "127.0.0.1", "port": port, "protocol": VERSION}), flush=True)
@@ -434,8 +438,9 @@ def main():
     parser.add_argument("--invite-ttl", type=float, default=600)
     parser.add_argument("--auth-timeout", type=float, default=5)
     parser.add_argument("--backup-every", type=float, default=300)
+    parser.add_argument("--idle-timeout", type=float, default=30)
     args = parser.parse_args()
-    if not (0 <= args.port <= 65535 and 0 < args.invite_ttl <= 3600 and 0 < args.auth_timeout <= 30 and args.backup_every >= 0):
+    if not (0 <= args.port <= 65535 and 0 < args.invite_ttl <= 3600 and 0 < args.auth_timeout <= 30 and args.backup_every >= 0 and 0 < args.idle_timeout <= 120):
         parser.error("Invalid limits")
     os.umask(0o077)
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")

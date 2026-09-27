@@ -74,6 +74,21 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
             await self.stop()
             self.temp.cleanup()
 
+    async def test_application_heartbeat_and_idle_deadline(self):
+        await self.stop()
+        await self.start("--idle-timeout", "1")
+        peer = await self.peer()
+        await peer.rpc("auth_host", token=self.token)
+        await peer.rpc("create_room", profile={"coins": 0})
+        for _ in range(4):
+            await asyncio.sleep(0.4)
+            self.assertEqual((await peer.rpc("ping"))["type"], "pong")
+        # A silent authenticated peer must not retain one of the bounded slots.
+        with self.assertRaises(ConnectionClosed):
+            await asyncio.wait_for(peer.socket.recv(), 2)
+        self.assertEqual(peer.socket.close_code, 1008)
+        self.assertEqual(peer.socket.close_reason, "Game heartbeat timed out")
+
     async def peer(self):
         peer = Peer(await connect(self.url, compression=None, max_size=4 * 1024 * 1024, proxy=None))
         self.peers.append(peer)

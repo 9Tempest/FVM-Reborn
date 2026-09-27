@@ -226,8 +226,15 @@ Incoming frames are limited to 1 MiB, profiles to 256 KiB each, snapshot state t
 768 KiB, JSON depth to 32, and config to 16 KiB. Client receivers should allow
 **4 MiB** to accommodate both profiles and a checkpoint in one state reply. At
 most 32 connections exist concurrently. Each connection has a 120-message burst
-and 60 messages/second refill rate. WebSocket ping and timeout are 20 seconds;
-GameMaker should additionally send application `ping` and detect missing `pong`.
+and 60 messages/second refill rate. The server does not initiate RFC WebSocket
+control PING frames: the tested GameMaker LTS 2026 runner replies with an unmasked
+control PONG, correctly rejected as protocol error 1002. Standard masking and
+frame validation remain enabled. Instead, clients send JSON `ping` every five
+seconds and expect JSON `pong`; authenticated connections are closed with code
+1008 after 30 seconds without an incoming application message (`--idle-timeout`
+can adjust this up to 120 seconds). The initial authentication deadline remains
+five seconds. This keeps silent clients from occupying connection slots without
+triggering the runner's control-frame interoperability bug.
 
 SQLite uses WAL, `synchronous=FULL`, and macOS `fullfsync=ON`. Backup uses the
 SQLite online backup API, not a copy of a live database file. A snapshot is made
@@ -246,10 +253,11 @@ tokens are bearer credentials and should be shared only with the invited player.
 The server trusts authenticated host simulation; it does not independently verify
 game balance or prevent a host administrator from changing their own database.
 
-The tests exercise real socket clients, authorization, one-use/expired invitations,
+The ten server tests exercise real socket clients, authorization, one-use/expired invitations,
 role restrictions, sequence deduplication, snapshots, presence/resume, forced
 process restart, durable campaign writes, duplicate results, transaction rollback,
-safe HTTP routes, frame limits and consistent backups.
+safe HTTP routes, frame limits, consistent backups, application heartbeats and
+silent authenticated-client expiry.
 
 ## Optional Mac login service and free external connectivity
 
