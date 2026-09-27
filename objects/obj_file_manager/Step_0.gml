@@ -34,12 +34,12 @@ if (_ime_typing != ime_was_typing) {
     if (_ime_typing) {
         // 获得焦点：放开输入法（摘子类化 + 杀定时器 + 挂回 HIMC）
         // 只在功能开启时才碰 IME：ime_block 关闭时从未屏蔽过，无需也不应改动窗口状态
-        if (global.ime_block && native_enable_ime != undefined) {
+        if (os_type == os_windows && global.ime_block && native_enable_ime != undefined) {
             native_enable_ime(window_handle());
         }
     } else {
         // 失焦：立刻恢复屏蔽
-        if (global.ime_block && native_disable_ime != undefined) {
+        if (os_type == os_windows && global.ime_block && native_disable_ime != undefined) {
             native_disable_ime(window_handle());
         }
     }
@@ -49,7 +49,17 @@ if (_ime_typing != ime_was_typing) {
 ime_tick++;
 if (!_ime_typing && ime_tick >= 60) {
     ime_tick = 0;
-    if (global.ime_block && native_disable_ime != undefined) {
+    if (os_type == os_windows && global.ime_block && native_disable_ime != undefined) {
         native_disable_ime(window_handle());
     }
+}
+
+// Real elapsed time keeps this cadence stable at both 60 and 120 FPS.
+autosave_elapsed += delta_time;
+var _save_has_focus = window_has_focus();
+if (autosave_had_focus && !_save_has_focus) save_autosave_check(true);
+autosave_had_focus = _save_has_focus;
+if (autosave_elapsed >= 2000000) {
+    autosave_elapsed = 0;
+    save_autosave_check();
 }

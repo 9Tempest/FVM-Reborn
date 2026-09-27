@@ -140,10 +140,15 @@ function laboratory_path_is_relative(_path) {
 /// @param {String} _path_prefix
 /// @returns {String}
 function laboratory_resolve_datafile_path(_path, _path_prefix) {
-    if (!string_ends_with(_path_prefix, "/") && !string_ends_with(_path_prefix, "\\")) {
-        _path_prefix = _path_prefix + "/"
+    _path = string_replace_all(string(_path), "\\", "/")
+    _path_prefix = string_replace_all(string(_path_prefix), "\\", "/")
+    // The prefix is the stage JSON filename, not a directory. POSIX paths cannot
+    // traverse "stage.json/../"; resolve assets from the containing directory.
+    var _folder = filename_dir(_path_prefix)
+    if (_folder != "" && !string_ends_with(_folder, "/")) {
+        _folder += "/"
     }
-    return _path_prefix + "../" + _path
+    return _folder + _path
 }
 
 /// @param {String} _path

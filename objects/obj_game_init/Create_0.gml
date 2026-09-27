@@ -13,7 +13,7 @@ function move_files () {
     var _saves_new = global.native_util.get_path_in_local_appdata("\\FVM_Reborn\\saves")
     var _save_folder_new_exists = native_folder_exists(_saves_new)
     var _save_folder_old_exists = native_folder_exists(_saves_old)
-    if ((_save_folder_new_exists == 0) && (_save_folder_old_exists == 1)) {
+    if (os_type == os_windows && (_save_folder_new_exists == 0) && (_save_folder_old_exists == 1)) {
         var _copy_result = native_copy_folder(_saves_old, _local_folder)
         if (_copy_result == 0) {
             show_message_async("存档已自动迁移到[" + _saves_new + "]")
@@ -24,11 +24,14 @@ function move_files () {
 
     var _local_laboratory = global.native_util.transfer_path_to_windows(working_directory + "laboratory")
     var _local_laboratory_exists = native_folder_exists(_local_laboratory)
-    if (_local_laboratory_exists == 1) {
+    var _writable_laboratory = global.native_util.to_native_absolute("laboratory")
+    // The macOS application bundle is read-only: seed its maps only once.
+    var _should_seed = os_type == os_windows || native_folder_exists(_writable_laboratory) == 0
+    if (_local_laboratory_exists == 1 && _local_laboratory != _writable_laboratory && _should_seed) {
         var _lab_copy_result = native_copy_folder(_local_laboratory, _local_folder)
         if (_lab_copy_result != 0) {
             global.native_util.show_error(_lab_copy_result, "实验室目录迁移失败")
-        } else {
+        } else if (os_type == os_windows) {
             var _lab_delete_result = native_delete_folder(_local_laboratory)
             if (_lab_delete_result != 0) {
                 global.native_util.show_error(_lab_delete_result, "旧实验室目录删除失败")
@@ -59,6 +62,11 @@ global.native_util = new NativeUtil()
 
 init_native_log()
 move_files()
+
+// Create writable folders before the first save or Finder action.
+if (!directory_exists("saves")) directory_create("saves")
+if (!directory_exists("backups")) directory_create("backups")
+if (!directory_exists("laboratory")) directory_create("laboratory")
 
 // 初始化全局键位映射
 global.keybind_map = ds_map_create();
@@ -148,9 +156,9 @@ for (var i = 0; i < array_length(global.keybind_config); i++) {
 ini_close();
 audio_group_set_gain(music,global.music_volume,0)
 audio_group_set_gain(sound,global.sound_volume,0)
+window_enable_borderless_fullscreen(global.borderless_window)
 window_set_fullscreen(global.fullscreen)
 gpu_set_tex_filter(global.tex_fliter)
-window_enable_borderless_fullscreen(global.borderless_window)
 
 // 设置初始静音状态
 global.music_volume_before_mute = global.music_volume > 0 ? global.music_volume : 0.7;
@@ -159,6 +167,6 @@ global.sound_volume_before_mute = global.sound_volume > 0 ? global.sound_volume 
 show_debug_message(working_directory)
 
 // 屏蔽输入法（IME）：游戏内全程中文候选框不弹出
-if (global.ime_block && native_disable_ime != undefined) {
+if (os_type == os_windows && global.ime_block && native_disable_ime != undefined) {
     native_disable_ime(window_handle());
 }

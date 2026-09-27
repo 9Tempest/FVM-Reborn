@@ -56,6 +56,7 @@ if target_id != ""{
 				(craft_rule_info.clover_require == "none" || display_clover_amount >= craft_rule_info.clover_amount) &&
 				global.save_data.player.gold >= craft_rule_info.gold_amount
 			{
+				save_transaction_begin()
 				for(var i = 0 ; i < array_length(spices_use_order) ; i++){
 					add_material_amount(spices_use_order[i],-spices_list[i])
 				}
@@ -66,6 +67,9 @@ if target_id != ""{
 				}
 				upgrade_card(target_id,current_level+1)
 				global.save_data.player.gold -= craft_rule_info.gold_amount
+				// Persist the upgraded card and every material/gold cost together.
+				save_file(global.save_slot)
+				save_transaction_end()
 				show_notice("卡片已强化",60)
 			}
 			else{
@@ -104,12 +108,15 @@ if target_id != ""{
 			if display_crystal_amount >= craft_rule_info.crystal_amount &&
 			global.save_data.player.gold >= craft_rule_info.gold_amount
 			{
+				save_transaction_begin()
 				for(var i = 0 ; i < array_length(crystal_use_order) ; i++){
 					add_material_amount(crystal_use_order[i],-crystal_list[i])
 				}
 				edit_gem_max_level(target_id,current_level+1)
 				edit_gem_level(target_id,get_gem_max_level(target_id))
 				global.save_data.player.gold -= craft_rule_info.gold_amount
+				save_file(global.save_slot)
+				save_transaction_end()
 				show_notice("宝石已强化",60)
 			}
 			else{

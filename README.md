@@ -2,6 +2,10 @@
 
 《美食大战老鼠：重生》是一款基于 GameMaker 引擎重新编写的《美食大战老鼠》同人游戏，旨在回归塔防初衷，优化不合理的游戏体验。
 
+本 fork 基于 [Spring-SG/FVM-Reborn](https://github.com/Spring-SG/FVM-Reborn) v2.4.1，新增原生 macOS 移植（Apple Silicon / Intel）。使用 Cocoa 原生扩展处理文件、存档备份和地图解压；保留 Windows 构建。构建步骤和验证状态见 [macOS 说明](docs/MACOS.md)。
+
+macOS 已完成原生构建、独立应用打包和实际主菜单/战斗验证。中文显示、鼠标布阵、数字键选卡、60 FPS 战斗与 120 FPS 加速已验证；原生扩展在 arm64 / x86_64 上各通过 20 项测试。运行 `./tools/macos/build.sh package-local` 可构建本机使用的沙盒应用。关键操作即时自动存档与可恢复写入已加入，正在进行独立运行测试；Intel 完整游戏尚未实际验收。
+
 ---
 
 ## 📋 目录
@@ -29,7 +33,8 @@
 本仓库包含以下主要分支：
 
 - **master(gitee)/main(github)**：稳定版分支，用于发布经过测试的稳定版本。建议通过此分支开发修改版。
-- **develop**：开发版分支，用于进行日常开发和功能迭代。
+- **develop**：上游开发版分支，用于进行日常开发和功能迭代。
+- **macos-native**：本 fork 的原生 macOS 移植。
 
 ## 权限声明
 
@@ -54,11 +59,18 @@
 
 ## 安装与运行
 
-本软件仅支持Windows平台，在release中下载并解压压缩包后，运行可执行文件即可开始游戏。游玩过程中请不要修改资源文件夹中的任何文件，否则造成的游戏崩溃等问题后果自负。
+Windows 版可从上游 Releases 下载并解压运行。macOS 版请按 [macOS 构建说明](docs/MACOS.md) 编译并运行；仓库包含匹配源代码的双架构原生扩展。请保持应用内的资源文件完整。
 
 ## 构建方式
 
-如果使用YYC构建方式，请按照以下方式构建：
+macOS（GameMaker LTS 2026，IDE 2026.0.0.16 / Runtime 2026.0.0.23）：
+
+```sh
+./tools/macos/build.sh doctor
+./tools/macos/build.sh run
+```
+
+Windows 如果使用YYC构建方式，请按照以下方式构建：
 - 在 **GameMaker Studio2** 中打开此项目
 - 下载 **Visual Studio** ，并安装MSVC v142生成工具
 - 在GMS2中设置VS路径

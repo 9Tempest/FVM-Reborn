@@ -3,17 +3,20 @@ function FileUtil() constructor {
     /// @param {String} _path 
     /// @returns {Array<String>} 
     static find_sub_folders = function(_path) {
+        _path = string_replace_all(string(_path), "\\", "/")
+        if (!string_ends_with(_path, "/")) {
+            _path += "/"
+        }
         var _sub_folders = []
         if (!directory_exists(_path)) {
             return _sub_folders
         }
         show_debug_message("Find sub folders at: " + _path);
-        var _folder_name = file_find_first(_path + "*", fa_directory)
+        var _attributes = (os_type == os_windows) ? fa_directory : fa_none
+        var _folder_name = file_find_first(_path + "*", _attributes)
         while (_folder_name != "") {
-            if (directory_exists(_path + _folder_name)) {
-                if (_folder_name == "." || _folder_name == "..") {
-                    continue
-                }
+            if (_folder_name != "." && _folder_name != ".."
+                && directory_exists(_path + _folder_name)) {
                 array_push(_sub_folders, _path + _folder_name)
             }
             _folder_name = file_find_next()
@@ -30,6 +33,7 @@ function FileUtil() constructor {
     /// @returns {Array<String>} full path of files
     static find_files_with_extension_recursively = function(_path, _extension) {
         var _files = [];
+        _path = string_replace_all(string(_path), "\\", "/");
         
         if (string_char_at(_path, string_length(_path)) != "/") {
             _path += "/";
@@ -38,7 +42,9 @@ function FileUtil() constructor {
         if (!directory_exists(_path)) return _files;
 
         var _temp_list = [];
-        var _item = file_find_first(_path + "*.*", fa_directory | fa_archive | fa_readonly);
+        // File attributes are Windows-only. "*" also finds extensionless folders on macOS.
+        var _attributes = (os_type == os_windows) ? (fa_directory | fa_archive | fa_readonly) : fa_none;
+        var _item = file_find_first(_path + "*", _attributes);
         
         while (_item != "") {
             if (_item != "." && _item != "..") {

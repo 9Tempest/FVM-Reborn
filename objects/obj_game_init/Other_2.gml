@@ -33,7 +33,11 @@ global.player_name = "Player";
 global.total_time = 0
 global.player_sprite = noone;
 
-load_file(global.save_slot)
+if (!load_file(global.save_slot)) {
+    show_message("存档无法读取，已保留原文件。请从备份恢复后重试。");
+    game_end();
+    exit;
+}
 //reset_file(global.save_slot)
 
 
@@ -180,8 +184,11 @@ if global.debug{
 //	global.save_data.unlocked_items.shovel = "gold"
 }
 
-var screen_width = display_get_width()/1920
-var screen_height = display_get_height()/1080
-window_set_size(1920*0.8*screen_width,1080*0.8*screen_width)
+// Fit the 16:9 game inside either dimension of the current display.
+if (!window_get_fullscreen()) {
+    var _window_scale = 0.8 * min(display_get_width() / 1920, display_get_height() / 1080)
+    window_set_size(floor(1920 * _window_scale), floor(1080 * _window_scale))
+    window_center()
+}
 
 global.gui_stack.to(room_menu)

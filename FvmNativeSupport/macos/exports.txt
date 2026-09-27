@@ -1,0 +1,13 @@
+_OpenFolder
+_FolderExists
+_FileExists
+_CopyFolder
+_DeleteFolder
+_StartBackupWithTargetFile
+_StartBackup
+_RestoreBackupWithTargetFile
+_RestoreBackup
+_SetNativeLogFilePath
+_DisableIme
+_EnableIme
+_UnzipMapFile

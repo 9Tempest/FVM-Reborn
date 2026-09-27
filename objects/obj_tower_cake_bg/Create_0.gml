@@ -92,6 +92,7 @@ function refresh_reward_button(){
 
 var level_list = global.maps_map[? "tower_cake"].levels_data
 has_card = false
+save_transaction_begin()
 for(var __index__ = 0 ; __index__ < array_length(level_list) ; __index__++){
 	var c_level_data = level_list[__index__]
 	for(var i = 0 ; i < array_length(c_level_data.rewards);i++){
@@ -117,6 +118,7 @@ for(var __index__ = 0 ; __index__ < array_length(level_list) ; __index__++){
 		}
 	}
 }
+save_transaction_end()
 if has_card{
 	show_notice("未领取的转职奖励已自动领取",60)
 }

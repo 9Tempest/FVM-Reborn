@@ -1,5 +1,6 @@
 varying vec2 v_vTexcoord;
 varying vec4 v_vColour;
+varying vec2 v_vPosition;
 
 uniform vec2 in_origin;
 uniform vec2 in_size;
@@ -7,9 +8,9 @@ uniform float in_radius;
 
 void main()
 {
-    vec2 global_pixel_pos = vec2(gl_FragCoord.x, gl_FragCoord.y);
-
-    vec2 local_pixel_pos = global_pixel_pos - in_origin;
+    // Match the room coordinates supplied by ClipRRect on every graphics backend.
+    // Framebuffer coordinates have platform-dependent origins and scaling.
+    vec2 local_pixel_pos = v_vPosition - in_origin;
 
     vec2 half_size = in_size * 0.5;
 

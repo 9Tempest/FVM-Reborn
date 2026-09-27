@@ -11,5 +11,8 @@ for(var i = 0 ; i < array_length(global.save_data.tasks);i++){
 for(var i = 0 ; i < array_length(remove_task_id_list);i++){
 	remove_task(remove_task_id_list[i],1)
 }
+if array_length(remove_task_id_list) > 0{
+	save_file(global.save_slot)
+}
 obj_player_info_ui.menu_type = 0
 obj_world_map_button.world_map = 0

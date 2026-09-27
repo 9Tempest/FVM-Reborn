@@ -67,7 +67,7 @@ function focus() {
     }
     self.state.focused = true
     keyboard_string = self.state.text
-    if (variable_global_exists("ime_block") && native_enable_ime != undefined) {
+    if (os_type == os_windows && variable_global_exists("ime_block") && native_enable_ime != undefined) {
         native_enable_ime(window_handle())
     }
 }
@@ -77,7 +77,7 @@ function blur() {
         return
     }
     self.state.focused = false
-    if (variable_global_exists("ime_block") && global.ime_block && native_disable_ime != undefined) {
+    if (os_type == os_windows && variable_global_exists("ime_block") && global.ime_block && native_disable_ime != undefined) {
         native_disable_ime(window_handle())
     }
 }

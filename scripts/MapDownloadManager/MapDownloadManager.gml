@@ -39,7 +39,7 @@ function MapDownloadManager() constructor {
             _name = string_replace_all(_name, _illegal[i], "_")
         }
         _name = string_trim(_name)
-        if (_name == "") {
+        if (_name == "" || _name == "." || _name == "..") {
             _name = "untitled"
         }
         return _name
@@ -48,7 +48,7 @@ function MapDownloadManager() constructor {
     /// @param {String} _title
     /// @returns {String}
     static get_download_folder = function(_title) {
-        return self.laboratory_appdata() + "\\download\\" + self.sanitize_title(_title)
+        return global.native_util.to_native_absolute("laboratory/download/" + self.sanitize_title(_title))
     }
 
     /// @param {String} _rel
@@ -150,7 +150,7 @@ function MapDownloadManager() constructor {
     /// @returns {String}
     static extension_from_map_file = function(_map_file) {
         var _name = filename_ext(string(_map_file))
-        if (_name == "") {
+        if (_name == "" || _name == "." || _name == "..") {
             return ".zip"
         }
         return _name

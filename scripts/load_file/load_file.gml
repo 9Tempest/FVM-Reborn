@@ -1,36 +1,33 @@
-/// @function load_file(file_slot)
-/// @desc 加载存档文件到全局变量global.save_data中
-/// @param {real} file_slot 存档槽位
+/// Load only validated data; a failed slot switch keeps the prior slot in memory.
 function load_file(file_slot) {
-	var file_path = "saves/" + "save" + string(file_slot) + ".json"
-    // 检查存档文件是否存在
-    if (!file_exists(file_path)) {
-        // 如果存档不存在，创建初始存档数据
-        reset_file(file_slot)
-        return true;
+    save_state_init();
+    if (!save_slot_valid(file_slot)) return false;
+    var _old_data = variable_global_exists("save_data") ? global.save_data : undefined;
+    var _old_slot = global.loaded_save_slot;
+    var _old_ready = global.save_ready;
+    var _old_depth = global.save_transaction_depth;
+    var _path = "saves/save" + string(file_slot) + ".json";
+    var _candidate = save_read_candidate(_path);
+    var _recovered = false;
+    if (!_candidate.ok) {
+        // A completed pending write can survive interruption between the renames.
+        _candidate = save_read_candidate(_path + ".pending");
+        if (!_candidate.ok) _candidate = save_read_candidate(_path + ".bak");
+        _recovered = _candidate.ok;
     }
-    
-    // 打开存档文件
-    var file = file_text_open_read(file_path);
-    if (file == -1) {
-        show_debug_message("无法打开存档文件!");
+    var _new = !file_exists(_path) && !file_exists(_path + ".pending") && !file_exists(_path + ".bak");
+    if (!_candidate.ok && !_new) {
+        // A damaged current slot must not be overwritten by stale RAM after import.
+        if (file_slot == _old_slot) global.save_ready = false;
+        show_debug_message("存档加载失败，文件与当前存档槽均已保留: " + _path);
         return false;
     }
-    
-    // 读取文件内容
-    var json_string = "";
-    while (!file_text_eof(file)) {
-        json_string += file_text_read_string(file);
-        file_text_readln(file);
-    }
-    file_text_close(file);
-    
-    // 解析JSON字符串
+    global.save_loading = true;
+    global.save_transaction_depth++;
+    global.save_data = _new ? new_save_data() : _candidate.data;
     try {
-        global.save_data = json_parse(json_string);
-        show_debug_message("存档加载成功!");
 		if global.save_data.version == 1.0 || global.save_data.version == "1.1"|| global.save_data.version == "1.2"|| global.save_data.version == "1.3"{
-			reset_file(file_slot)
+			global.save_data = new_save_data()
 		}
 		else{
 			if global.save_data.version == "1.4"{
@@ -55,16 +52,46 @@ function load_file(file_slot) {
 				global.save_data.version = 1.8
 			}
 		}
-        return true;
-    } catch(e) {
-        show_debug_message("存档解析错误: " + string(e));
+        if (!save_data_valid(global.save_data)) throw "invalid migrated save";
+    } catch (_error) {
+        global.save_data = _old_data;
+        global.save_ready = _old_ready && file_slot != _old_slot;
+        global.save_loading = false;
+        global.save_transaction_depth = _old_depth;
+        show_debug_message("存档迁移失败: " + string(_error));
         return false;
     }
+    global.save_loading = false;
+    global.save_transaction_depth = _old_depth;
+    global.save_slot = file_slot;
+    global.loaded_save_slot = file_slot;
+    global.save_ready = true;
+    global.player_name = global.save_data.player.name;
+    global.total_time = global.save_data.player.total_time;
+    global.save_last_json = _recovered || _new ? "" : _candidate.text;
+    global.save_last_progress = save_progress_json();
+    global.save_last_check_time = current_time;
+    if (_recovered || _new || json_stringify(global.save_data) != global.save_last_json) save_file(file_slot);
+    show_debug_message("存档加载成功! slot=" + string(file_slot));
+    return true;
 }
 
-function reset_file(file_slot){
-	//重置到初始存档
-	global.save_data = {
+/// Explicit new/reset operation, never used to replace a damaged save implicitly.
+function reset_file(file_slot) {
+    save_state_init();
+    if (!save_slot_valid(file_slot)) return false;
+    global.save_data = new_save_data();
+    global.save_slot = file_slot;
+    global.loaded_save_slot = file_slot;
+    global.save_ready = true;
+    global.player_name = global.save_data.player.name;
+    global.total_time = global.save_data.player.total_time;
+    global.save_last_json = "";
+    return save_file(file_slot);
+}
+
+function new_save_data() {
+    return {
             "version": 1.8,
             "player": {
                 "gold": 0,
@@ -150,5 +177,4 @@ function reset_file(file_slot){
 			"attires":[],
 			"equipped_cookbook":[[],[],[]]
         };
-	save_file(file_slot)
 }

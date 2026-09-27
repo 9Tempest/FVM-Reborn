@@ -1,0 +1,32 @@
+name: macOS native extension
+
+on:
+  push:
+    paths:
+      - 'FvmNativeSupport/macos/**'
+      - 'FvmNativeSupport/FvmNativeSupport/json.hpp'
+      - '.github/workflows/macos-native.yml'
+  pull_request:
+    paths:
+      - 'FvmNativeSupport/macos/**'
+      - 'FvmNativeSupport/FvmNativeSupport/json.hpp'
+      - '.github/workflows/macos-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-extension:
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build universal native library
+        run: bash FvmNativeSupport/macos/build.sh
+      - name: Check architectures and ad-hoc signature
+        run: |
+          lipo FvmNativeSupport/macos/build/libFvmNativeSupport.dylib -verify_arch arm64 x86_64
+          codesign --verify FvmNativeSupport/macos/build/libFvmNativeSupport.dylib
+      - name: Test native extension behavior
+        run: python3 FvmNativeSupport/macos/test_native.py

@@ -29,6 +29,7 @@ for (var i = 0; i < array_length(buttons); i++) {
                     // 购买逻辑
 					obj_shop_bg.is_submenu_opened = false
 					with banding_buy_btn{
+						save_transaction_begin()
 						if btn_type == "card"{
 							global.save_data.player.gold -= cost
 							unlock_card(target_item,0,0,global.save_data.unlocked_items.max_skill_level)
@@ -59,8 +60,9 @@ for (var i = 0; i < array_length(buttons); i++) {
 							else if target_item == "card_slot_21" && global.save_data.unlocked_items.max_slot == 20{
 								global.save_data.unlocked_items.max_slot += 1
 							}
-							save_file(global.save_slot)
 						}
+						// Persist the deduction and unlocked item together, including attire.
+						save_transaction_end()
 					}
 						with obj_shop_bg{
 							shop_list_recharge()
