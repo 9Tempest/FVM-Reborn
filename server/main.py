@@ -88,6 +88,9 @@ class GameServer:
         # state transitions cannot be overtaken by a queued older visual frame.
         if message.get("type") in ("loadout_state", "match_started", "match_finished", "snapshot"):
             client.pending_visual = None
+        if (message.get("type") == "screen_cleared" and client.pending_visual
+                and client.pending_visual["type"] == "screen_frame"):
+            client.pending_visual = None
         async with client.send_lock:
             await asyncio.wait_for(client.socket.send(encode({"v": VERSION, **message})), 3)
 
@@ -341,6 +344,12 @@ class GameServer:
             return {"type": "pong", "server_time": time.time()}, []
         if kind == "leave":
             return {"type": "left"}, []
+        if kind == "screen_clear":
+            self.require_host(client)
+            self.clear_screen(client.room_id)
+            cleared = {"type": "screen_cleared", "room_id": client.room_id,
+                       "stream_id": client.screen_stream}
+            return cleared, [(cleared, "guest", None)]
         if kind == "screen_frame":
             self.require_host(client)
             require(self.screen_allowed(client.room_id), "screen_unavailable", "Screen sharing is paused for card selection or battle")

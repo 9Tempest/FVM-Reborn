@@ -724,6 +724,64 @@ class Streaming(unittest.IsolatedAsyncioTestCase):
             release.set()
             await asyncio.gather(task, return_exceptions=True)
 
+    async def test_host_screen_clear_fences_old_frames_and_preserves_game_state(self):
+        host, guest, created, joined = await self.room()
+        self.assertEqual((await guest.rpc("screen_clear"))["code"], "forbidden")
+        connection = self.app.clients[(created["room_id"], joined["player_id"])]
+        original = connection.socket.send
+        blocked, release = asyncio.Event(), asyncio.Event()
+        sent = []
+        async def slow_frame(payload):
+            message = json.loads(payload)
+            if message["type"] == "screen_frame" and message["seq"] == 1:
+                blocked.set()
+                await release.wait()
+            await original(payload)
+            sent.append((message["type"], message.get("seq")))
+        connection.socket.send = slow_frame
+        try:
+            await host.rpc("screen_frame", **screen_fields())
+            await asyncio.wait_for(blocked.wait(), 1)
+            await asyncio.sleep(0.26)
+            await host.rpc("screen_frame", **screen_fields(2))
+            self.assertEqual(connection.pending_visual["seq"], 2)
+            writer = connection.visual_task
+            cleared = await host.rpc("screen_clear", request_id="return-to-private-lobby")
+            self.assertEqual(cleared["type"], "screen_cleared")
+            self.assertEqual(cleared["request_id"], "return-to-private-lobby")
+            self.assertEqual(cleared["room_id"], created["room_id"])
+            self.assertNotIn(created["room_id"], self.app.shared_screens)
+            self.assertIsNone(connection.pending_visual)
+            release.set()
+            self.assertEqual((await guest.event("screen_frame"))["seq"], 1)
+            self.assertEqual((await guest.event("screen_cleared"))["stream_id"], cleared["stream_id"])
+            await asyncio.wait_for(writer, 1)
+            self.assertEqual(sent, [("screen_frame", 1), ("screen_cleared", None)])
+            await guest.socket.close()
+            await host.event("player_disconnected")
+            guest = await self.peer()
+            resumed = await guest.rpc("resume", room_id=created["room_id"], resume_token=joined["resume_token"])
+            self.assertIsNone(resumed["state"]["shared_screen"])
+            self.assertTrue(all(p["profile"] == profile() for p in resumed["state"]["players"]))
+            # Clearing is legal in every phase and does not mutate preparation,
+            # match or campaign state, including the active battle checkpoint.
+            preparation = await self.prepare(host)
+            self.assertEqual((await host.rpc("screen_clear"))["type"], "screen_cleared")
+            self.assertEqual((await host.rpc("get_state"))["state"]["preparation"], preparation)
+            match = await self.start_match(host, guest)
+            fields = dict(match_id=match["match_id"], applied_command_id=0)
+            await host.rpc("snapshot", tick=1, state={"game_over": False}, **fields)
+            before = (await host.rpc("get_state"))["state"]
+            self.assertEqual((await host.rpc("screen_clear"))["type"], "screen_cleared")
+            self.assertEqual((await host.rpc("get_state"))["state"], before)
+            profiles = {created["player_id"]: profile(), joined["player_id"]: profile()}
+            await host.rpc("match_result", match_id=match["match_id"], result={"outcome": "defeat"}, profiles=profiles)
+            before = (await host.rpc("get_state"))["state"]
+            self.assertEqual((await host.rpc("screen_clear"))["type"], "screen_cleared")
+            self.assertEqual((await host.rpc("get_state"))["state"], before)
+        finally:
+            release.set()
+
     async def test_final_snapshot_follows_latest_visual_before_result(self):
         host, guest, created, joined = await self.room()
         match = await self.start_match(host, guest)
