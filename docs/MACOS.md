@@ -111,6 +111,14 @@ python3 FvmNativeSupport/macos/test_native.py
 
 本地签名未经过 Apple 公证。面向其他用户的常规发布应配置自己拥有的 Apple Developer ID，按 [GameMaker macOS 选项文档](https://manual.gamemaker.io/lts/en/Settings/Game_Options/macOS.htm) 完成发布签名和公证。签名原理及流程参考 [Apple 关于本地 ad-hoc 签名的说明](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements) 和 [Apple macOS 签名说明](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/)。
 
+### 更新已有安装时的存档访问授权
+
+macOS 14 或更新版本会将沙盒容器与应用的代码签名关联。本测试包使用 ad-hoc 签名，更新后签名身份可能变化；即使应用标识与存档位置不变，系统也可能要求新版应用获得访问旧容器的许可。这与首次打开未公证应用时的开发者验证提示是两个独立步骤，见 [Apple 关于沙盒容器访问的说明](https://developer.apple.com/documentation/security/accessing-files-from-the-macos-app-sandbox)。
+
+先正常退出旧版，再用新版替换应用并通过 Finder 打开。若 macOS 请求应用访问已有数据，请核对应用名称和下载来源，再通过该系统提示决定是否允许。等待许可时，应用可能尚未显示游戏窗口；拒绝许可可能使这次启动失败。原存档应保留在原容器内，不要删除容器、修改容器元数据、移除下载隔离标记或关闭 Gatekeeper 来处理这一提示。
+
+隔离回归已确认：原运行器不更换入口、只更新版本并重新 ad-hoc 签名，也会触发同样的容器访问请求。系统日志明确记录签名不在旧容器 ACL 内并请求授权；等待发生在 `main` 之前。新启动器的路径回归 22/22 通过，覆盖 ZIP 解压、`/private/tmp` 别名、空格及中文路径、参数保留和沙盒文件写读。此自动化结果不代替真实下载、安装及系统授权界面的验收；当前发行候选的这项人工验收仍待完成。
+
 ## 验收项目
 
 发布前至少实际确认：启动与主菜单、中文字体、窗口及全屏切换、声音、创建和读写存档、一场完整战斗、实验室关卡导入与下载、退出后重新启动。完成验证后应在本文件记录系统版本、架构、GameMaker 版本、通过项目和已知问题。
