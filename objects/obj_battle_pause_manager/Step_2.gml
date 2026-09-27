@@ -29,6 +29,17 @@ if (victory_started) {
 	exit;
 }
 
+// Co-op pause is ordered by the server and requires both players to resume.
+if (coop_is_active()) {
+    if (global.game_over && global.coop.result_saved && (keyboard_check_pressed(vk_space) || keyboard_check_pressed(vk_enter) || coop_ui_hit(1450,950,360,72))) {
+        global.coop.battle_started=false; global.gui_stack.to(room_coop); exit;
+    }
+    if (!global.game_over && (keyboard_check_pressed(vk_space) || keyboard_check_pressed(vk_escape))) {
+        global.coop.send_input("pause_vote", {paused:!coop_get(global.coop_battle.pause_votes,global.coop.player_id,false)});
+    }
+    exit;
+}
+
 // obj_battle_pause_manager - Step Event
 if (keyboard_check_pressed(vk_space) || (mouse_check_button_pressed(mb_left) && global.game_over)) {	
     //if global.selected_slot == noone {

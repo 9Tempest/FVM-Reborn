@@ -85,6 +85,7 @@ function save_transaction_end() {
 function save_file(file_slot) {
     save_state_init();
     if (global.save_loading || global.save_transaction_depth > 0) return true;
+    if (variable_global_exists("coop") && is_struct(global.coop) && global.coop.active) return global.coop.save_campaign();
     if (!global.save_ready || !save_slot_valid(file_slot)
         || file_slot != global.loaded_save_slot || file_slot != global.save_slot) return false;
     if (!save_data_valid(global.save_data)) return save_report_error("invalid in-memory save");

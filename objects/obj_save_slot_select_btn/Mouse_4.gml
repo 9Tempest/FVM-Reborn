@@ -1,3 +1,4 @@
+if (coop_is_active()) { show_notice("合作模式使用主机的共同进度，请退出合作后切换单人存档",180); exit; }
 if (config_key == "save_slot" && global.save_slot != state) {
     if (!save_file(global.save_slot)) {
         show_notice("当前进度尚未保存，暂时无法切换存档。", 180);

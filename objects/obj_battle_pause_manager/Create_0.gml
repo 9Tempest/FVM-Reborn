@@ -186,6 +186,11 @@ function victory_icon(_sprite, _frame, _x, _y, _w, _h, _alpha) {
 }
 
 function leave_victory_screen() {
+    if (coop_is_active() && !global.coop.result_saved) {
+        show_notice("正在保存合作奖励，请等待主机确认",120);
+        return;
+    }
+    if (coop_is_active()) { global.coop.battle_started=false; global.gui_stack.to(room_coop); return; }
 	if (global.map_id == "tower_cake" || global.map_id == "delicious_town") {
 		global.map_id = "delicious_island"
 		global.map_name = "美味岛"

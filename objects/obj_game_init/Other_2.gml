@@ -191,4 +191,5 @@ if (!window_get_fullscreen()) {
     window_center()
 }
 
+if (!instance_exists(obj_coop_controller)) instance_create_depth(0,0,-100000,obj_coop_controller);
 global.gui_stack.to(room_menu)

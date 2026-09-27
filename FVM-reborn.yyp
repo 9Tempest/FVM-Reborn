@@ -696,6 +696,12 @@
   },
   "name":"FVM-reborn",
   "resources":[
+    {"id": {"name": "room_coop", "path": "rooms/room_coop/room_coop.yy"}},
+    {"id": {"name": "obj_coop_controller", "path": "objects/obj_coop_controller/obj_coop_controller.yy"}},
+    {"id": {"name": "CoopBattle", "path": "scripts/CoopBattle/CoopBattle.yy"}},
+    {"id": {"name": "CoopUI", "path": "scripts/CoopUI/CoopUI.yy"}},
+    {"id": {"name": "CoopSession", "path": "scripts/CoopSession/CoopSession.yy"}},
+    {"id": {"name": "CoopTransport", "path": "scripts/CoopTransport/CoopTransport.yy"}},
     {"id":{"name":"WindowsNative","path":"extensions/WindowsNative/WindowsNative.yy",},},
     {"id":{"name":"font_hei","path":"fonts/font_hei/font_hei.yy",},},
     {"id":{"name":"font_number","path":"fonts/font_number/font_number.yy",},},
@@ -3244,6 +3250,7 @@
     {"roomId":{"name":"room_laboratory","path":"rooms/room_laboratory/room_laboratory.yy",},},
     {"roomId":{"name":"room_ready","path":"rooms/room_ready/room_ready.yy",},},
     {"roomId":{"name":"room_battle","path":"rooms/room_battle/room_battle.yy",},},
+    {"roomId":{"name":"room_coop","path":"rooms/room_coop/room_coop.yy"}},
   ],
   "templateType":"game",
   "TextureGroups":[

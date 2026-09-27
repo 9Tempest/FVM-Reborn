@@ -83,3 +83,7 @@ function fixture_expect(_name, _condition) {
 	if (!_condition) global.fixture_failed++
 	show_debug_message("FVM_VICTORY_ASSERT=" + string(_condition) + " " + _name)
 }
+
+// The standalone victory regression exercises the unchanged solo presentation.
+function coop_is_active() { return false; }
+function coop_ui_hit(_x,_y,_w,_h) { return false; }

@@ -1,3 +1,6 @@
+if (coop_is_active() && (btn_type=="import_save_backup" || btn_type=="export_save_backup" || btn_type=="open_save_folder")) {
+    show_notice("合作进度由主机数据库保存；请退出合作后管理单人备份",180); exit;
+}
 audio_play_sound(snd_button,0,0)
 if btn_type == "cancel"{
 	instance_destroy(obj_edit_menu)
