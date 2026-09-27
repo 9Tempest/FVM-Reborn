@@ -95,6 +95,23 @@ function CoopSession() constructor {
     selected_gem = -1;
     shovel_selected = false;
     leaving = false;
+    preparation = undefined;
+    preparation_revision = -1;
+    match_config = {};
+    loadout_draft = [];
+    loadout_pending = false;
+    loadout_request_id = "";
+    preparation_request = undefined;
+    preparation_queued = undefined;
+    loadout_changing_level = false;
+    loadout_host_level_ready = false;
+    host_level_context = undefined;
+    personal_loadouts_supported = false;
+    loadout_start_retry_at = 0;
+    loadout_attempt = undefined;
+    loadout_attempt_view = undefined;
+    loadout_attempt_profile = "";
+    loadout_retry_count = 0;
 
     static request = function(_type, _body = undefined) {
         var _p = is_struct(_body) ? coop_clone(_body) : {};
@@ -109,11 +126,137 @@ function CoopSession() constructor {
         for (var _i = 0; _i < array_length(players); _i++) if (!coop_get(players[_i], "connected", false)) return false;
         return true;
     };
+    static restore_host_level = function(_preparation_id, _level_id) {
+        loadout_host_level_ready = false;
+        if (role != "host" || !is_struct(host_level_context)
+            || coop_get(host_level_context,"preparation_id","") != _preparation_id
+            || coop_get(host_level_context,"level_id","") != _level_id
+            || !is_struct(coop_get(host_level_context,"level_data"))
+            || coop_get(host_level_context.level_data,"id","") != _level_id
+            || !is_struct(coop_get(host_level_context,"level_file"))) return false;
+        var _keys = ["level_id","level_data","level_file","map_id","map_name","difficulty","level_index"];
+        for (var _i=0; _i<array_length(_keys); _i++) {
+            if (variable_struct_exists(host_level_context,_keys[_i])) {
+                variable_global_set(_keys[_i],coop_clone(variable_struct_get(host_level_context,_keys[_i])));
+            }
+        }
+        loadout_host_level_ready = true;
+        return true;
+    };
+    static sync_preparation = function(_value, _force_local = false) {
+        if (!is_struct(_value)) {
+            preparation=undefined; preparation_revision=-1;
+            if (!loadout_pending) loadout_draft=[];
+            return;
+        }
+        var _changed = !is_struct(preparation) || coop_get(preparation,"id","") != coop_get(_value,"id","");
+        var _revision = coop_get(_value,"revision",0);
+        if (!_changed && _revision < preparation_revision) return;
+        preparation=coop_clone(_value); preparation_revision=_revision;
+        if (_changed || _force_local || !loadout_pending) {
+            var _selection=coop_get(coop_get(preparation,"selections"),player_id);
+            loadout_draft=coop_clone(coop_get(_selection,"deck",[]));
+        }
+        if (role=="host") {
+            // A newly acknowledged choice binds the persisted level description
+            // to this server-generated preparation, never to a stale room state.
+            if (is_struct(preparation_request) && is_struct(host_level_context)
+                && preparation_request.level_id == preparation.level_id) {
+                host_level_context.preparation_id=preparation.id;
+                if (!remember()) { loadout_host_level_ready=false; return; }
+            }
+            restore_host_level(preparation.id,preparation.level_id);
+        }
+    };
+    static prepare_loadout = function(_level_id,_level_name,_limit) {
+        if (!active || role!="host" || !all_connected() || room_status=="running") {
+            status="需要两位玩家在线，并先结束当前战斗"; return false;
+        }
+        if (!personal_loadouts_supported) { status="请先更新这台 Mac 的合作服务和双方游戏版本"; return false; }
+        if (loadout_pending) return is_struct(preparation_queued) || is_struct(preparation_request);
+        if (!variable_global_exists("level_data") || !variable_global_exists("level_file")
+            || !is_struct(global.level_data) || !is_struct(global.level_file)) {
+            status="请重新选择关卡"; return false;
+        }
+        host_level_context={level_id:_level_id,preparation_id:""};
+        var _keys=["level_data","level_file","map_id","map_name","difficulty","level_index"];
+        for (var _i=0;_i<array_length(_keys);_i++) if (variable_global_exists(_keys[_i])) {
+            variable_struct_set(host_level_context,_keys[_i],coop_clone(variable_global_get(_keys[_i])));
+        }
+        loadout_host_level_ready=false;
+        if (!remember()) return false;
+        preparation_queued={level_id:_level_id,level_name:_level_name,slot_limit:_limit};
+        loadout_pending=true; loadout_changing_level=false;
+        status="正在保存共同进度并准备双方选卡…";
+        flush_preparation();
+        return true;
+    };
+    static flush_preparation = function() {
+        if (!is_struct(preparation_queued) || !connected || role!="host" || room_status=="running") return false;
+        if (is_struct(result_request) || is_struct(campaign_request)) { flush_outbox(); return false; }
+        if (!save_campaign() || is_struct(campaign_request)) return false;
+        preparation_request=request("prepare_match",preparation_queued);
+        preparation_queued=undefined; loadout_request_id=preparation_request.request_id;
+        return transport.send(preparation_request);
+    };
+    static set_loadout = function(_deck,_ready,_retry=false) {
+        if (!active || !connected || !is_struct(preparation) || room_status=="running"
+            || loadout_pending || !is_array(_deck) || !is_bool(_ready)) return false;
+        if (_ready && (!all_connected() || (role=="host" && !loadout_host_level_ready))) {
+            status=role=="host" && !loadout_host_level_ready ? "请房主重新选择关卡" : "等待队友连接后再准备";
+            return false;
+        }
+        var _p=request("set_loadout",{preparation_id:preparation.id,revision:preparation_revision,deck:_deck,ready:_ready});
+        loadout_attempt=coop_clone(_p);
+        loadout_attempt_view=coop_clone(preparation);
+        loadout_attempt_profile=coop_campaign_progress(json_stringify(global.save_data));
+        if (!_retry) loadout_retry_count=0;
+        loadout_request_id=_p.request_id; loadout_pending=true; loadout_draft=coop_clone(_deck);
+        status=_ready ? "正在确认准备…" : "正在保存你的选卡…";
+        return transport.send(_p);
+    };
+    static cancel_preparation = function() {
+        if (role!="host" || !connected || !is_struct(preparation) || loadout_pending || room_status=="running") return false;
+        var _p=request("cancel_preparation",{preparation_id:preparation.id,revision:preparation_revision});
+        loadout_request_id=_p.request_id; loadout_pending=true; loadout_changing_level=true;
+        status="正在取消准备，返回选关…";
+        return transport.send(_p);
+    };
+    static both_loadouts_ready = function() {
+        if (!all_connected() || !is_struct(preparation) || loadout_pending || loadout_changing_level) return false;
+        var _selections=coop_get(preparation,"selections");
+        for (var _i=0;_i<array_length(players);_i++) {
+            var _s=coop_get(_selections,players[_i].player_id);
+            if (!coop_get(_s,"ready",false) || array_length(coop_get(_s,"deck",[]))<1) return false;
+        }
+        return true;
+    };
+    static loadout_choices_unchanged = function(_before) {
+        if (!is_struct(_before) || !is_struct(preparation) || _before.id!=preparation.id
+            || _before.level_id!=preparation.level_id || _before.slot_limit!=preparation.slot_limit
+            || loadout_attempt_profile!=coop_campaign_progress(json_stringify(global.save_data))) return false;
+        for (var _i=0;_i<array_length(players);_i++) {
+            var _id=players[_i].player_id;
+            var _a=coop_get(coop_get(coop_get(_before,"selections"),_id),"deck",[]);
+            var _b=coop_get(coop_get(coop_get(preparation,"selections"),_id),"deck",[]);
+            if (json_stringify(_a)!=json_stringify(_b)) return false;
+        }
+        return true;
+    };
+    static launch_prepared_battle = function() {
+        if (role!="host" || !coop_get(match_config,"per_player_loadouts",false)) return false;
+        if (!restore_host_level(coop_get(match_config,"preparation_id",""),coop_get(match_config,"level_id",""))) {
+            status="关卡准备数据缺失，请重新选关"; return false;
+        }
+        if (!coop_loadout_launch_host()) { status="选卡数据无法加载，请重新选关"; return false; }
+        return true;
+    };
     static remember = function() {
         if (resume_token == "") return false;
         saved_session = {url:url, public_url:public_url, room_id:room_id, player_id:player_id,
             role:role, resume_token:resume_token, result_request:result_request,
-            campaign_request:campaign_request, campaign_pending_json:campaign_pending_json};
+            campaign_request:campaign_request, campaign_pending_json:campaign_pending_json,
+            host_level_context:host_level_context};
         outbox_durable = coop_write_json("coop/session.json", saved_session);
         if (!outbox_durable) status = "合作存档未能写入磁盘，请检查空间后重试";
         return outbox_durable;
@@ -133,6 +276,11 @@ function CoopSession() constructor {
         result_request=undefined; campaign_request=undefined; outbox_durable=true;
         campaign_pending_json=""; campaign_json=""; result_saved=false; result_outcome="";
         latest=undefined; previous=undefined; invite_code=""; retry_at=0; reconnect_attempt=0;
+        preparation=undefined; preparation_revision=-1; match_config={}; loadout_draft=[];
+        loadout_pending=false; loadout_request_id=""; preparation_request=undefined; preparation_queued=undefined;
+        loadout_changing_level=false; loadout_host_level_ready=false; host_level_context=undefined;
+        personal_loadouts_supported=false; loadout_start_retry_at=0;
+        loadout_attempt=undefined; loadout_attempt_view=undefined; loadout_attempt_profile=""; loadout_retry_count=0;
     };
     static preserve_solo = function() {
         if (is_struct(solo) && active) return true;
@@ -230,11 +378,17 @@ function CoopSession() constructor {
         result_outcome = coop_get(coop_get(result_request,"result"),"outcome","");
         campaign_request = coop_get(saved_session,"campaign_request",undefined);
         campaign_pending_json = coop_get(saved_session,"campaign_pending_json","");
+        host_level_context = coop_get(saved_session,"host_level_context",undefined);
         status = "正在恢复合作房间…"; leaving = false;
         return connect_transport();
     };
     static network_lost = function() {
         connected = false;
+        // Server state is authoritative after reconnect. Never replay Ready or
+        // an old selection onto a possibly different preparation automatically.
+        loadout_pending=false; loadout_request_id=""; loadout_attempt=undefined;
+        preparation_request=undefined; preparation_queued=undefined;
+        loadout_changing_level=false; start_request_id="";
         if (leaving) return;
         status = active ? "连接中断，战斗已暂停，正在重连…" : "暂时无法连接，正在重试房间地址…";
         retry_at = current_time + min(1000 * power(2,reconnect_attempt),10000);
@@ -256,6 +410,11 @@ function CoopSession() constructor {
         if (!is_struct(_s)) return;
         players = coop_get(_s,"players",players);
         room_status = coop_get(_s,"room_status",room_status);
+        personal_loadouts_supported=coop_get(coop_get(_s,"features"),"personal_loadouts",false);
+        match_config=coop_clone(coop_get(_s,"config",{}));
+        var _level=coop_get(_s,"level_id","");
+        if (is_string(_level)) match_config.level_id=_level;
+        sync_preparation(coop_get(_s,"preparation"),_initial);
         var _m = coop_get(_s,"match_id","");
         match_id = is_string(_m) ? _m : "";
         for (var _i = 0; _i < array_length(players); _i++) {
@@ -315,6 +474,13 @@ function CoopSession() constructor {
                 if (instance_exists(obj_battle)) {
                     // The start ACK was lost, but the original simulation still exists.
                     battle_started = true; coop_battle_ready();
+                } else if (!is_struct(coop_get(_p.state,"checkpoint"))
+                    && coop_get(match_config,"per_player_loadouts",false)
+                    && restore_host_level(coop_get(match_config,"preparation_id",""),coop_get(match_config,"level_id",""))) {
+                    // start_match committed but its ACK was lost before entering
+                    // the battle. No snapshot means no simulation is being restored.
+                    battle_started=true;
+                    if (!launch_prepared_battle()) { battle_started=false; submit_result("defeat"); }
                 } else {
                     submit_result("defeat");
                     status = "上局因主机退出结束，已恢复最近的共同进度";
@@ -328,6 +494,17 @@ function CoopSession() constructor {
             update_state(_p.state);
             status = all_connected() ? "两位玩家已连接" : "等待队友连接，战斗暂停";
             break;
+        case "loadout_state":
+            var _loadout_ack=coop_get(_p,"request_id","")==loadout_request_id;
+            var _changing=loadout_changing_level && _loadout_ack;
+            if (_loadout_ack) { loadout_pending=false; loadout_request_id=""; }
+            update_state(_p.state);
+            if (_loadout_ack) { preparation_request=undefined; loadout_attempt=undefined; }
+            if (_changing && !is_struct(preparation)) {
+                loadout_changing_level=false; loadout_host_level_ready=false;
+                global.gui_stack.to(room_menu); status="请选择下一关";
+            } else status=both_loadouts_ready() ? "双方已准备，正在开始…" : "分别选择卡牌，然后点击准备";
+            break;
         case "match_started":
             var _new_match = match_id != _p.match_id || !battle_started;
             update_state(_p.state);
@@ -335,7 +512,11 @@ function CoopSession() constructor {
             if (_new_match) { seq = 0; applied_command_id = 0; snapshot_tick = 0; inputs_pending = []; }
             result_saved = false; result_request = undefined; result_outcome = "";
             battle_started = true;
-            if (role == "host" && instance_exists(obj_battle)) coop_battle_ready();
+            start_request_id="";
+            if (role == "host") {
+                if (instance_exists(obj_battle)) coop_battle_ready();
+                else if (!launch_prepared_battle()) { battle_started=false; submit_result("defeat"); break; }
+            }
             if (role == "guest") global.gui_stack.to(room_coop);
             status = "先分别放置自己的角色，再共同布阵";
             remember();
@@ -357,6 +538,7 @@ function CoopSession() constructor {
                 campaign_json = campaign_pending_json; campaign_request = undefined; campaign_committed_at = current_time;
                 status = "共同进度已保存到主机"; remember();
             }
+            if (is_struct(coop_get(_p,"state"))) update_state(_p.state);
             break;
         case "match_result_ack":
             if (_p.match_id == match_id && _p.committed) {
@@ -377,12 +559,32 @@ function CoopSession() constructor {
             break;
         case "error":
             var _code = coop_get(_p,"code","");
+            var _request_id=coop_get(_p,"request_id","");
+            var _retry_edit=undefined;
+            if (loadout_request_id!="" && _request_id==loadout_request_id) {
+                if (_code=="preparation_conflict" && is_struct(loadout_attempt)) _retry_edit=loadout_attempt;
+                loadout_pending=false; loadout_request_id=""; loadout_changing_level=false;
+                preparation_request=undefined; preparation_queued=undefined;
+            }
+            if (is_struct(coop_get(_p,"state"))) update_state(_p.state);
             if (start_request_id != "" && coop_get(_p,"request_id","") == start_request_id
                 && variable_global_exists("coop_battle") && is_struct(global.coop_battle)
                 && coop_get(global.coop_battle,"start_requested",false) && !battle_started) {
                 global.coop_battle.start_requested = false;
             }
+            if (start_request_id!="" && _request_id==start_request_id) {
+                start_request_id=""; loadout_start_retry_at=current_time+1000;
+                if (!is_struct(coop_get(_p,"state"))) send("get_state");
+            }
             status = "联机提示：" + string(coop_get(_p,"message",_code));
+            if (is_struct(_retry_edit) && is_struct(preparation)
+                && _retry_edit.preparation_id==preparation.id && loadout_retry_count<3) {
+                loadout_retry_count++;
+                // Simultaneous Ready clicks can retry against a newer revision
+                // only when neither choices nor library changed in the meantime.
+                var _still_approved=_retry_edit.ready && loadout_choices_unchanged(loadout_attempt_view);
+                set_loadout(_retry_edit.deck,_still_approved,true);
+            }
             if (_code == "unauthorized" || _code == "invite_invalid" || _code == "resume_invalid"
                 || _code == "room_not_found" || _code == "room_unavailable" || _code == "room_full") {
                 leaving = true; retry_at = 0; transport.close(); connected = false;
@@ -422,6 +624,10 @@ function CoopSession() constructor {
     static start_battle = function(_level_id) {
         if (role != "host" || !all_connected()) { status = "需要两位玩家在线才能开始"; return false; }
         if (room_status == "running") return false;
+        if (!both_loadouts_ready() || !loadout_host_level_ready || preparation.level_id!=_level_id) {
+            status="请双方分别选卡并点击准备"; return false;
+        }
+        if (start_request_id!="") return true;
         if (is_struct(result_request) || is_struct(campaign_request)) {
             status = "请等待共同进度保存完成后开始"; flush_outbox(); return false;
         }
@@ -429,7 +635,8 @@ function CoopSession() constructor {
             status = "正在保存共同进度，请稍后开始"; return false;
         }
         battle_started = false;
-        var _request = request("start_match",{level_id:_level_id,profiles:profiles(),config:{shared_campaign:true,client_version:global.game_version}});
+        var _request = request("start_match",{level_id:_level_id,preparation_id:preparation.id,revision:preparation_revision,
+            config:{shared_campaign:true,client_version:global.game_version}});
         start_request_id = _request.request_id;
         return transport.send(_request);
     };
@@ -481,6 +688,11 @@ function CoopSession() constructor {
             connect_transport();
         }
         if (connected && current_time-last_ping >= 5000) { last_ping=current_time; send("ping"); }
+        if (connected && role=="host") {
+            if (is_struct(preparation_queued)) flush_preparation();
+            if (room_status!="running" && !battle_started && both_loadouts_ready()
+                && loadout_host_level_ready && current_time>=loadout_start_retry_at) start_battle(preparation.level_id);
+        }
         if (active && role == "host" && current_time-last_campaign_check >= 2000) {
             last_campaign_check=current_time;
             if (is_struct(result_request) || is_struct(campaign_request)) flush_outbox();
@@ -503,6 +715,9 @@ function CoopSession() constructor {
             global.save_ready=solo.ready; global.loaded_save_slot=solo.loaded_slot; solo=undefined;
         }
         resume_token=""; battle_started=false; latest=undefined;
+        preparation=undefined; match_config={}; loadout_draft=[]; loadout_pending=false;
+        loadout_request_id=""; preparation_request=undefined; preparation_queued=undefined;
+        loadout_changing_level=false; loadout_host_level_ready=false; host_level_context=undefined;
         global.gui_stack.to(room_menu);
         status="已返回单人模式";
         return true;
