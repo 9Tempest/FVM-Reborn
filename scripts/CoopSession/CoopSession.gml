@@ -147,6 +147,12 @@ function CoopSession() constructor {
         for (var _i = 0; _i < array_length(players); _i++) variable_struct_set(_p, players[_i].player_id, coop_clone(global.save_data));
         return _p;
     };
+    static connect_transport = function() {
+        var _ok=transport.connect(url);
+        // DNS/socket failures can happen synchronously, before any async event.
+        if (!_ok) event(transport.last_event);
+        return _ok;
+    };
     static create = function() {
         if (active) return false;
         host_config = coop_read_json("coop/host.json");
@@ -158,7 +164,7 @@ function CoopSession() constructor {
         public_url = coop_get(host_config, "public_url", url);
         status = "正在连接本机服务器…";
         leaving = false;
-        return transport.connect(url);
+        return connect_transport();
     };
     static join = function(_code) {
         if (active) return false;
@@ -186,7 +192,7 @@ function CoopSession() constructor {
         reset_entry();
         entry = "join"; entry_data = _d; url = _d.url; public_url = url;
         status = "正在连接队友的 Mac…"; leaving = false;
-        return transport.connect(url);
+        return connect_transport();
     };
     static resume = function() {
         if (active) return false;
@@ -215,12 +221,12 @@ function CoopSession() constructor {
         campaign_request = coop_get(saved_session,"campaign_request",undefined);
         campaign_pending_json = coop_get(saved_session,"campaign_pending_json","");
         status = "正在恢复合作房间…"; leaving = false;
-        return transport.connect(url);
+        return connect_transport();
     };
     static network_lost = function() {
         connected = false;
         if (leaving) return;
-        status = "连接中断，战斗已暂停，正在重连…";
+        status = active ? "连接中断，战斗已暂停，正在重连…" : "暂时无法连接，正在重试房间地址…";
         retry_at = current_time + min(1000 * power(2,reconnect_attempt),10000);
         reconnect_attempt++;
     };
@@ -453,10 +459,12 @@ function CoopSession() constructor {
     };
     static tick = function() {
         event(transport.tick());
+        // send() may also fail synchronously; consume its fatal event once.
+        if (transport.state=="error" && retry_at==0 && !leaving && is_struct(transport.last_event)) event(transport.last_event);
         if (retry_at > 0 && current_time >= retry_at && !leaving) {
             retry_at = 0;
             if (resume_token != "") { entry = "resume"; entry_data = saved_session; }
-            transport.connect(url);
+            connect_transport();
         }
         if (connected && current_time-last_ping >= 5000) { last_ping=current_time; send("ping"); }
         if (active && role == "host" && current_time-last_campaign_check >= 2000) {

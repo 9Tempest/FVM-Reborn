@@ -23,7 +23,7 @@ function fixture_expect(_name,_ok) {
     show_debug_message((_ok?"PASS ":"FAIL ")+_name);
 }
 function fixture_fake_transport() {
-    return {send:function(_p) { array_push(global.fixture_sent,coop_clone(_p)); return true; },
+    return {state:"open",last_event:undefined,send:function(_p) { array_push(global.fixture_sent,coop_clone(_p)); return true; },
         close:function() {},connect:function(_url) { return true; },tick:function() { return undefined; }};
 }
 function fixture_unit_session() {
@@ -121,6 +121,19 @@ function fixture_units() {
     _host.packet({type:"error",request_id:"start-retry",code:"players_not_ready",message:"retry"});
     fixture_expect("rejected start request releases bridge retry gate",!global.coop_battle.start_requested);
     instance_destroy(_instance);
+    var _failed=new CoopSession();_failed.url=@SERVER_URL@;
+    _failed.transport={state:"closed",last_event:undefined,connect:function(_url){state="error";last_event={kind:"error",fatal:true,code:"connect_failed",message:"fixture DNS failure"};return false;},
+        send:function(_packet){state="error";last_event={kind:"error",fatal:true,code:"send_failed",message:"fixture send failure"};return false;},
+        close:function(){},tick:function(){return undefined;}};
+    fixture_expect("synchronous DNS/connect failure schedules session retry",!_failed.connect_transport() && _failed.retry_at>current_time && _failed.reconnect_attempt==1);
+    _failed.tick();
+    fixture_expect("one synchronous connection failure is consumed once",_failed.reconnect_attempt==1);
+    _failed.transport.state="open";_failed.retry_at=0;_failed.reconnect_attempt=0;_failed.connected=true;
+    fixture_expect("synchronous send failure is reported to caller",!_failed.send("ping"));
+    _failed.tick();
+    fixture_expect("synchronous send failure schedules retry on Step",!_failed.connected && _failed.retry_at>current_time && _failed.reconnect_attempt==1);
+    _failed.tick();
+    fixture_expect("one synchronous send failure is consumed once",_failed.reconnect_attempt==1);
     // Clear only this unique test app's credentials before the live protocol test.
     for(var _i=0;_i<3;_i++) {var _path=["coop/session.json","coop/session.json.pending","coop/session.json.bak"][_i];if(file_exists(_path))file_delete(_path);}
 }
