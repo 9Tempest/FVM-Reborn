@@ -10,6 +10,7 @@ if is_slowdown{
 
 attack_timer++
 
+var _ice_owner = variable_instance_exists(id,"coop_owner") ? coop_owner : "";
 if attack_timer == 1{
 	if shape <= 1{
 		with obj_card_parent{
@@ -19,7 +20,7 @@ if attack_timer == 1{
 				{
 					if array_get_index(other.ignore_list,plant_id) == -1{
 						with obj_card_slot{
-							if card_id == other.plant_id{
+							if card_id == other.plant_id && (!coop_personal_loadouts() || coop_owner == _ice_owner){
 								cooldown_timer = cooldown
 							}
 						}
@@ -30,7 +31,7 @@ if attack_timer == 1{
 	}
 	else{
 		with obj_card_slot{
-			if array_get_index(other.ignore_list,card_id) == -1{
+			if array_get_index(other.ignore_list,card_id) == -1 && (!coop_personal_loadouts() || coop_owner == _ice_owner){
 				cooldown_timer = cooldown
 			}
 		}

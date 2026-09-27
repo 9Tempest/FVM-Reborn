@@ -1,3 +1,4 @@
+if (!coop_slot_local(id)) exit;
 // DRAW 事件
 
 

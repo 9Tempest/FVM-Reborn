@@ -2,7 +2,7 @@
 """Exercise the real host battle router in an isolated GameMaker VM.
 
 A synthetic session and tiny stand-in scene test owner/sequence validation,
-shared slots, pause/disconnect behavior, snapshots, and result ordering. Game
+independent decks/resources, legacy shared slots, pause/disconnect behavior, snapshots, and result ordering. Game
 save scripts and user files are excluded. Card/equipment simulation is covered
 by the full game build; this fixture tests the bridge's actual command routing.
 """
@@ -32,7 +32,7 @@ def prepare(root, app_id):
     shutil.rmtree(project / "scripts")
     shutil.rmtree(project / "objects")
     parent = {"name":"Harness", "path":"folders/Harness.yy"}
-    for name in ("CoopBattle", "get_grid_position_from_world"):
+    for name in ("CoopBattle", "get_grid_position_from_world", "create_battle_slots"):
         shutil.copytree(REPO / "scripts" / name, project / "scripts" / name)
         path = project / "scripts" / name / (name + ".yy")
         meta = helpers.read_yy(path)
@@ -49,12 +49,13 @@ def prepare(root, app_id):
         obj = copy.deepcopy(template)
         obj.update({"%Name":name,"name":name,"parent":parent})
         obj["eventList"] = []
-        if name in ("obj_autosave_tests", "obj_player_character"):
+        if name in ("obj_autosave_tests", "obj_player_character", "obj_card_slot"):
             obj["eventList"] = [e for e in template["eventList"] if e["eventType"] == 0]
         path = project / "objects" / name / (name + ".yy")
         helpers.write_yy(path, obj)
         if name == "obj_autosave_tests": path.with_name("Create_0.gml").write_text("bridge_run();\n")
         if name == "obj_player_character": path.with_name("Create_0.gml").write_text("bridge_player_create();\n")
+        if name == "obj_card_slot": path.with_name("Create_0.gml").write_text("bridge_slot_create();\n")
         yyp["resources"].append({"id":{"name":name,"path":str(path.relative_to(project))}})
     for name in ("spr_win", "spr_lose", "spr_mouse_frozen", "spr_mouse_scared"):
         shutil.copytree(REPO / "sprites" / name, project / "sprites" / name)

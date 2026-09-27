@@ -1,4 +1,5 @@
 //create事件
+if (!variable_instance_exists(id,"coop_owner")) coop_owner = "";
 cooldown = 7 * 60
 card_obj = obj_small_fire
 card_spr = spr_small_fire
@@ -31,6 +32,7 @@ cooldown_ignore_list = ["ice_cream","magic_chicken"]
 
 //选择卡槽逻辑
 function select_slot(){
+	if (!coop_slot_local(id)) return;
 	// 选中当前卡槽
         is_selected = true;
         
@@ -59,7 +61,11 @@ function deselect_slot(){
 }
 
 //尝试放置逻辑
-function try_place_once(_world_x = mouse_x, _world_y = mouse_y, _ordered = false){
+function try_place_once(_world_x = mouse_x, _world_y = mouse_y, _ordered = false, _owner = ""){
+	if (coop_personal_loadouts()) {
+		if (_ordered && (_owner == "" || _owner != coop_owner)) return false;
+		if (!_ordered && !coop_slot_local(id)) return false;
+	}
 	if (coop_battle_active() && !_ordered) {
 		var _cell = coop_grid_from_world(_world_x, _world_y);
 		if (_cell.col < 0 || _cell.row < 0) return false;
@@ -84,9 +90,9 @@ function try_place_once(_world_x = mouse_x, _world_y = mouse_y, _ordered = false
 		var card_shape = get_card_info_simple(card_id).shape
 		var card_data = deck_get_card_data(card_id,card_shape)
 		if card_id == "magic_chicken"{
-			if global.prev_place_id != ""{
-				card_shape = get_card_info_simple(global.prev_place_id).shape
-				card_data = deck_get_card_data(global.prev_place_id,card_shape)
+			if coop_prev_card_get(coop_owner) != ""{
+				card_shape = get_card_info_simple(coop_prev_card_get(coop_owner)).shape
+				card_data = deck_get_card_data(coop_prev_card_get(coop_owner),card_shape)
 			}
 		}
         
@@ -145,7 +151,10 @@ function try_place_once(_world_x = mouse_x, _world_y = mouse_y, _ordered = false
 
         var can_plant = (can_place_at_position(logical_world.x, logical_world.y, card_data[? "plant_type"],card_data[? "feature_type"],card_data[? "target_card"]));
         
-        if (can_plant && global.flame >= current_cost) {
+        if (can_plant && coop_flame_spend(coop_owner,current_cost)) {
+            // Reserve cooldown and owner funds before nested plant Create events.
+            cooldown_timer = 0;
+            is_ready = false;
             // 创建植物实例
 			var plant_list = ds_grid_get(global.grid_plants, logical_col, logical_row);
 			var target_card_id = card_data[? "target_card"];
@@ -180,7 +189,8 @@ function try_place_once(_world_x = mouse_x, _world_y = mouse_y, _ordered = false
 					}
 				}
 			}
-            var new_plant = instance_create_depth(logical_world.x + platform_shift_x, logical_world.y + platform_shift_y, 0,card_obj);
+            var new_plant = instance_create_depth(logical_world.x + platform_shift_x, logical_world.y + platform_shift_y, 0,card_obj,
+                {coop_owner:coop_owner,coop_copy_card:coop_prev_card_get(coop_owner)});
 			// 计算深度值
 			var depth_value = calculate_plant_depth(logical_col, logical_row, new_plant.plant_type);
 			card_created(new_plant, logical_col, logical_row);
@@ -194,15 +204,9 @@ function try_place_once(_world_x = mouse_x, _world_y = mouse_y, _ordered = false
 				inst.sprite_index = spr_enter_water_effect
 			}
             
-            // 扣除阳光
-            global.flame -= current_cost;
-            
-            // 重置冷却计时器
-            cooldown_timer = 0;
-            is_ready = false;
 			
 			if array_get_index(cooldown_ignore_list,card_id) == -1{
-				global.prev_place_id = card_id
+				coop_prev_card_set(coop_owner,card_id);
 			}
 			
             if global.grid_terrains[logical_row][logical_col].type == "normal"{

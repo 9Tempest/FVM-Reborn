@@ -1,6 +1,22 @@
 function bridge_expect(_name, _passed) { array_push(global.bridge_tests, {name:_name, passed:_passed}); }
 // Audio lifecycle is exercised by the separate native audio fixture.
 function coop_audio_snapshot() { return {}; }
+function deck_slot_max() { return 3; }
+function deck_slot_is_empty(_i) { return true; }
+function get_card_info_simple(_id) {
+    return array_get_index(["fixture-card","host-card","guest-card"],_id) >= 0 ? {shape:0,level:0} : false;
+}
+function deck_get_card_data(_id,_shape) { return global.bridge_card_data; }
+function bridge_slot_create() {
+    if (!variable_instance_exists(id,"coop_owner")) coop_owner = "";
+    info_got = true; card_spr = spr_win; place_preview = undefined;
+    current_cost = 50; cooldown = 420; cooldown_timer = 420; is_ready = true; clevel = 0; cshape = 0;
+    try_place_once = function(_x,_y,_ordered,_owner) {
+        if (cooldown_timer < cooldown || !coop_flame_spend(coop_owner,current_cost)) return false;
+        cooldown_timer = 0; is_ready = false; global.bridge_placed++;
+        return _ordered && _owner == coop_owner;
+    };
+}
 function bridge_player_create() {
     coop_owner = ""; is_placed = false; grid_row = -1; grid_col = -1; hp = 600; max_hp = 600;
     try_place_player = function(_x, _y) {
@@ -107,6 +123,51 @@ function bridge_run() {
     bridge_expect("enemy maxhp and transient effects survive snapshot", _snapshot.entities[0].max_hp == 500 && array_length(_snapshot.entities[0].effects) == 3 && _snapshot.entities[0].flash_alpha == 0.5 && _snapshot.entities[0].flash_shader == "hit_effect_2");
     bridge_expect("custom boss health bar survives snapshot", array_length(_snapshot.bosses) == 1 && _snapshot.bosses[0].hp == 250 && _snapshot.bosses[0].max_hp == 500);
     bridge_expect("snapshot round-trips JSON", is_struct(json_parse(json_stringify(_snapshot))));
+
+    // A new match uses one validated deck and one resource account per owner.
+    global.bridge_card_data = ds_map_create();
+    global.bridge_card_data[? "cost"] = 50; global.bridge_card_data[? "cooldown"] = 420;
+    global.bridge_card_data[? "obj"] = obj_fixture_plant; global.bridge_card_data[? "sprite"] = spr_win;
+    global.bridge_card_data[? "place_preview"] = undefined; global.bridge_card_data[? "description"] = "Fixture";
+    with (obj_card_slot) instance_destroy();
+    global.coop.match_config = {per_player_loadouts:true,flame_ratio:0.6,loadouts:{host:["fixture-card","host-card"],guest:["fixture-card","guest-card"]}};
+    global.coop.battle_started = false;
+    coop_flame_initialize(500);
+    coop_battle_begin();
+    bridge_expect("room start defers owned slots until both match owners exist", !create_battle_slots() && instance_number(obj_card_slot)==0);
+    global.coop.battle_started = true;
+    coop_battle_ready(); coop_battle_tick();
+    bridge_expect("both chosen decks create four separate slots", instance_number(obj_card_slot)==4 && global.coop_battle.slots_ready);
+    bridge_expect("initial resource becomes sixty percent for each player", coop_flame_get("host")==300 && coop_flame_get("guest")==300 && global.flame==300);
+    var _host_slot=noone; var _guest_slot=noone;
+    for(var _i=0;_i<instance_number(obj_card_slot);_i++) {
+        var _s=instance_find(obj_card_slot,_i);
+        if(_s.slot_index==1) { if(_s.coop_owner=="host") _host_slot=_s; else _guest_slot=_s; }
+    }
+    bridge_expect("guest slots are hidden while host slots stay visible", _host_slot.visible && !_guest_slot.visible);
+    coop_flame_collect(25);
+    bridge_expect("one 25 flame pickup credits fifteen to both", coop_flame_get("host")==315 && coop_flame_get("guest")==315);
+    var _personal_packet=bridge_packet("guest","place_card",{row:2,col:3,slot_index:1,card_id:"fixture-card"});
+    bridge_expect("guest spends only guest flame and cooldown", coop_battle_command(_personal_packet) && coop_flame_get("guest")==265 && coop_flame_get("host")==315 && _guest_slot.cooldown_timer==0 && _host_slot.cooldown_timer==420);
+    bridge_expect("duplicate personal placement cannot charge twice", !coop_battle_command(_personal_packet) && coop_flame_get("guest")==265);
+    bridge_expect("guest cannot use a host-only card at the same index", !coop_battle_command(bridge_packet("guest","place_card",{row:2,col:4,slot_index:2,card_id:"host-card"})));
+    bridge_expect("host has independent cooldown for the same card", coop_battle_command(bridge_packet("host","place_card",{row:2,col:4,slot_index:1,card_id:"fixture-card"})) && coop_flame_get("host")==265);
+    coop_flame_spend("guest",65);
+    create_battle_slots(); coop_battle_ready();
+    bridge_expect("repeat room and ready hooks do not recreate slots or balances", instance_number(obj_card_slot)==4 && coop_flame_get("guest")==200 && _guest_slot.cooldown_timer==0);
+    coop_prev_card_set("host","host-card"); coop_prev_card_set("guest","guest-card");
+    bridge_expect("copy history is independent for each owner", coop_prev_card_get("host")=="host-card" && coop_prev_card_get("guest")=="guest-card" && global.prev_place_id=="host-card");
+    var _personal_state=coop_battle_snapshot();
+    bridge_expect("snapshot provides owner slots and personal balances", _personal_state.per_player_loadouts && _personal_state.balances[$ "host"]==265 && _personal_state.balances[$ "guest"]==200 && _personal_state.slots[0].owner=="host" && _personal_state.slots[2].owner=="guest" && _personal_state.flame==265);
+    coop_flame_collect(999999);
+    bridge_expect("each personal pool has an independent 15000 cap", coop_flame_get("host")==15000 && coop_flame_get("guest")==15000);
+    bridge_expect("unknown account cannot spend even zero", !coop_flame_spend("intruder",0));
+    global.coop_battle.slots_ready=false;
+    global.coop.match_config.loadouts.guest=["fixture-card","fixture-card"];
+    bridge_expect("duplicate-card loadout cannot create extra cooldowns", !coop_battle_prepare_loadouts() && instance_number(obj_card_slot)==4);
+    global.coop.match_config.loadouts.guest=["fixture-card","guest-card"];
+    global.coop_battle.slots_ready=true;
+
     var _over = instance_create_depth(0,0,0,obj_game_over); _over.sprite_index = spr_win;
     var _ui = instance_find(obj_battle_pause_manager,0);
     _ui.rewards_committed = false; _ui.victory_started = false;

@@ -85,7 +85,7 @@ if !is_capture{
     
     
 	    if (collect_timer >= collect_duration) {
-	        global.flame += value;
+	        coop_flame_collect(value);
 	        //var fx = instance_create_layer(target_x, target_y, "Effects", obj_sun_fx);
 	       // fx.value = value;
 	        instance_destroy();

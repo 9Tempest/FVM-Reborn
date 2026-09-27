@@ -18,4 +18,4 @@ plant_type = "coffee"
 is_slowdown = false
 current_hp = hp
 
-target_card = global.prev_place_id
+target_card = variable_instance_exists(id,"coop_copy_card") ? coop_copy_card : coop_prev_card_get();

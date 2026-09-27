@@ -29,12 +29,16 @@ if cooldown_timer < cooldown{
     cooling_alpha = max(cooling_alpha - 0.05, 0); // 淡出冷却效果
     
     // 检查阳光是否足够
-    if (global.flame >= current_cost) {
+    if (coop_flame_get(coop_owner) >= current_cost) {
         is_ready = true;
     } else {
         is_ready = false;
     }
 }
+
+// Remote owned slots keep cooling down but never consume host input.
+if (!info_got) event_user(0);
+if (!coop_slot_local(id)) { hover_alpha = 0; exit; }
 
 // 检测鼠标悬停（用于显示提示）
 var mx = device_mouse_x_to_gui(0);

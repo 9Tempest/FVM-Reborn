@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Run production card-slot and grid placement logic in an isolated native VM.
 
-Only input/audio builtins are substituted in temporary event copies. Synthetic
-card definitions and inert plant objects keep this focused on selection, terrain,
-stacking, upgrades, moving platforms and resource/cooldown transactions. Real
-plant combat and networking are covered by the separate full-game fixture.
+Input/audio builtins are substituted in temporary event copies. Synthetic card
+definitions and inert plants keep this focused on selection, terrain, stacking,
+upgrades, moving platforms and resource/cooldown transactions. Flame and ice-cream
+event bodies also run on bound fixture instances, without parent combat logic.
+Real plant combat and networking are covered by the separate full-game fixture.
 """
 import copy
 import hashlib
@@ -40,7 +41,7 @@ def prepare(root, app_id):
         helpers.write_yy(path, meta)
         yyp["resources"].append({"id":{"name":meta["name"],"path":str(path.relative_to(project))}})
 
-    for name in ("get_grid_position_from_world", "can_place_at_position", "card_created", "card_destroyed", "card_depth"):
+    for name in ("get_grid_position_from_world", "can_place_at_position", "card_created", "card_destroyed", "card_depth", "CoopBattle", "create_battle_slots"):
         shutil.copytree(REPO / "scripts" / name, project / "scripts" / name)
         path = project / "scripts" / name / (name + ".yy")
         register(path, helpers.read_yy(path))
@@ -50,14 +51,14 @@ def prepare(root, app_id):
     register(path, {"$GMScript":"v1","%Name":name,"name":name,"isCompatibility":False,"isDnD":False,"resourceType":"GMScript","resourceVersion":"2.0"})
     shutil.copyfile(HERE / "card-placement-fixture.gml", path.with_suffix(".gml"))
     template = helpers.read_yy(REPO / "objects/obj_card_slot/obj_card_slot.yy")
-    for name in ("obj_autosave_tests", "obj_card_slot", "obj_small_fire", "obj_shovel_slot", "obj_platform", "obj_place_effect", "obj_card_preview", "obj_fixture_plant"):
+    for name in ("obj_autosave_tests", "obj_card_slot", "obj_small_fire", "obj_shovel_slot", "obj_platform", "obj_place_effect", "obj_card_preview", "obj_fixture_plant", "obj_battle", "obj_player_character", "obj_game_over", "obj_battle_pause_manager", "obj_boss_hpbar", "obj_flame_manager", "obj_world_map_button", "obj_level_progress_bar", "obj_battle_timer_display", "obj_player_info_ui"):
         meta = copy.deepcopy(template)
         meta.update({"%Name":name,"name":name,"spriteId":None})
         meta["eventList"] = [e for e in template["eventList"] if (name == "obj_card_slot" and e["eventType"] != 8) or (name in ("obj_autosave_tests", "obj_fixture_plant") and e["eventType"] == 0)]
         path = project / "objects" / name / (name + ".yy")
         register(path, meta)
         if name == "obj_autosave_tests": path.with_name("Create_0.gml").write_text("placement_run();\n")
-        if name == "obj_fixture_plant": path.with_name("Create_0.gml").write_text("plant_id=global.spawn_id; plant_type=global.spawn_type; feature_type=global.spawn_feature; shape=0; depth_value=0;\n")
+        if name == "obj_fixture_plant": path.with_name("Create_0.gml").write_text("placement_plant_created();\n")
         if name == "obj_card_slot":
             for event in ("Create_0.gml", "Step_0.gml", "Step_2.gml", "Other_10.gml"):
                 source = (REPO / "objects" / name / event).read_text()
@@ -67,6 +68,26 @@ def prepare(root, app_id):
                 source = re.sub(r"\bmouse_x\b", "global.placement_mouse_x", source)
                 source = re.sub(r"\bmouse_y\b", "global.placement_mouse_y", source)
                 path.with_name(event).write_text(source)
+    for name, events in {
+        "obj_flame": ("Create_0.gml", "Step_0.gml"),
+        "obj_flame_manager_probe": ("Create_0.gml", "Step_2.gml"),
+        "obj_ice_cream_probe": ("Step_0.gml",),
+    }.items():
+        real_name = name.replace("_probe", "")
+        meta = copy.deepcopy(template)
+        meta.update({"%Name":name,"name":name,"spriteId":None,"eventList":[]})
+        path = project / "objects" / name / (name + ".yy")
+        register(path, meta)
+        for event in events:
+            source = (REPO / "objects" / real_name / event).read_text()
+            hashes["objects/"+real_name+"/"+event] = hashlib.sha256(source.encode()).hexdigest()
+            source = source.replace("event_inherited();", "")
+            source = re.sub(r"\baudio_play_sound\s*\(", "placement_audio_play_sound(", source)
+            # Harness helpers run this exact event body in a bound instance.
+            helper_name = "placement_" + real_name + "_" + event[:-4]
+            helper_path = project / "scripts" / helper_name / (helper_name + ".yy")
+            register(helper_path, {"$GMScript":"v1","%Name":helper_name,"name":helper_name,"isCompatibility":False,"isDnD":False,"resourceType":"GMScript","resourceVersion":"2.0"})
+            helper_path.with_suffix(".gml").write_text("function " + helper_name + "() {\n" + source + "\n}\n")
     helpers.write_yy(project_file, yyp)
     helpers.write_yy(root / "manifest.json", {"app_id":app_id,"source_sha256":hashes,"scope":"Production card-slot events and placement/grid scripts; synthetic card metadata and inert plants; deterministic input/audio seams; no saves."})
     return project_file

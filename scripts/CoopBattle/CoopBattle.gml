@@ -3,6 +3,104 @@ function coop_battle_active() {
     return variable_global_exists("coop") && is_struct(global.coop) && global.coop.active;
 }
 function coop_battle_host() { return coop_battle_active() && global.coop.role == "host"; }
+function coop_personal_loadouts() {
+    return coop_battle_active() && variable_struct_exists(global.coop,"match_config")
+        && is_struct(global.coop.match_config)
+        && variable_struct_exists(global.coop.match_config,"per_player_loadouts")
+        && global.coop.match_config.per_player_loadouts;
+}
+function coop_flame_initialize(_starting_flame) {
+    // Called by the flame manager before obj_battle finishes its Create event.
+    global.coop_starting_flame = max(0, _starting_flame);
+    global.flame = coop_personal_loadouts() ? min(15000, floor(global.coop_starting_flame * 0.6)) : _starting_flame;
+}
+function coop_flame_get(_owner = "") {
+    if (!coop_personal_loadouts()) return global.flame;
+    if (_owner == "") _owner = global.coop.player_id;
+    if (!variable_global_exists("coop_battle") || !global.coop_battle.balances_ready
+        || !variable_struct_exists(global.coop_battle.balances,_owner)) return 0;
+    return variable_struct_get(global.coop_battle.balances,_owner);
+}
+function coop_flame_spend(_owner, _amount) {
+    if (!is_real(_amount) || _amount < 0) return false;
+    if (coop_flame_get(_owner) < _amount) return false;
+    if (!coop_personal_loadouts()) { global.flame -= _amount; return true; }
+    if (_owner == "") _owner = global.coop.player_id;
+    if (!variable_global_exists("coop_battle") || !global.coop_battle.balances_ready) return false;
+    if (!variable_struct_exists(global.coop_battle.balances,_owner)) return false;
+    variable_struct_set(global.coop_battle.balances,_owner,coop_flame_get(_owner) - _amount);
+    global.flame = coop_flame_get(global.coop.player_id);
+    return true;
+}
+function coop_flame_collect(_value) {
+    if (!coop_personal_loadouts()) { global.flame += _value; return; }
+    if (!coop_battle_host() || !variable_global_exists("coop_battle") || !global.coop_battle.balances_ready) return;
+    var _credit = max(0,floor(_value * 0.6));
+    for (var _i = 0; _i < array_length(global.coop_battle.owners); _i++) {
+        var _owner = global.coop_battle.owners[_i];
+        variable_struct_set(global.coop_battle.balances,_owner,min(15000,coop_flame_get(_owner) + _credit));
+    }
+    global.flame = coop_flame_get(global.coop.player_id);
+}
+function coop_prev_card_get(_owner = "") {
+    if (!coop_personal_loadouts()) return global.prev_place_id;
+    if (_owner == "") _owner = global.coop.player_id;
+    if (!variable_global_exists("coop_battle") || !variable_struct_exists(global.coop_battle.previous_cards,_owner)) return "";
+    return variable_struct_get(global.coop_battle.previous_cards,_owner);
+}
+function coop_prev_card_set(_owner, _card_id) {
+    if (!coop_personal_loadouts()) { global.prev_place_id = _card_id; return; }
+    if (_owner == "") _owner = global.coop.player_id;
+    if (array_get_index(global.coop_battle.owners,_owner) == -1) return;
+    variable_struct_set(global.coop_battle.previous_cards,_owner,_card_id);
+    if (_owner == global.coop.player_id) global.prev_place_id = _card_id;
+}
+function coop_slot_local(_slot) {
+    return !coop_personal_loadouts() || (variable_instance_exists(_slot,"coop_owner") && _slot.coop_owner == global.coop.player_id);
+}
+
+/// Validate both decks before creating anything. Room Start and match ACK may
+/// arrive in either order; the resource/slot initialization is idempotent.
+function coop_battle_prepare_loadouts() {
+    if (!coop_personal_loadouts()) return true;
+    if (!coop_battle_host() || !variable_global_exists("coop_battle") || array_length(global.coop_battle.owners) != 2) return false;
+    if (global.coop_battle.slots_ready) return true;
+    var _config = global.coop.match_config;
+    if (!variable_struct_exists(_config,"loadouts") || !is_struct(_config.loadouts)) return false;
+    var _decks = [];
+    for (var _i = 0; _i < 2; _i++) {
+        var _owner = global.coop_battle.owners[_i];
+        if (!variable_struct_exists(_config.loadouts,_owner)) return false;
+        var _cards = variable_struct_get(_config.loadouts,_owner);
+        if (!is_array(_cards) || array_length(_cards) < 1 || array_length(_cards) > deck_slot_max()) return false;
+        var _deck = []; var _seen = [];
+        for (var _j = 0; _j < array_length(_cards); _j++) {
+            var _card_id = _cards[_j];
+            if (!is_string(_card_id) || _card_id == "" || array_get_index(_seen,_card_id) != -1) return false;
+            var _info = get_card_info_simple(_card_id);
+            if (!is_struct(_info)) return false;
+            var _data = deck_get_card_data(_card_id,_info.shape);
+            if (_data == noone) return false;
+            array_push(_deck,{card_id:_card_id,shape:_info.shape,data:_data});
+            array_push(_seen,_card_id);
+        }
+        array_push(_decks,_deck);
+    }
+    var _starting = variable_global_exists("coop_starting_flame") ? global.coop_starting_flame : global.flame;
+    for (var _i = 0; _i < 2; _i++) {
+        var _owner = global.coop_battle.owners[_i];
+        variable_struct_set(global.coop_battle.balances,_owner,min(15000,floor(max(0,_starting) * 0.6)));
+        variable_struct_set(global.coop_battle.previous_cards,_owner,"");
+        for (var _j = 0; _j < array_length(_decks[_i]); _j++) {
+            var _entry = _decks[_i][_j];
+            create_battle_card_slot(_entry.card_id,_entry.shape,_entry.data,_j,_owner);
+        }
+    }
+    global.coop_battle.balances_ready = true;
+    global.coop_battle.slots_ready = true;
+    global.flame = coop_flame_get(global.coop.player_id);
+    return true;
+}
 function coop_player_id(_player) {
     if (is_string(_player)) return _player;
     if (is_struct(_player) && variable_struct_exists(_player, "player_id")) return _player.player_id;
@@ -57,7 +155,8 @@ function coop_world_from_grid(_row, _col) {
 
 function coop_battle_begin() {
     if (!coop_battle_host()) return;
-    global.coop_battle = {ready:false, last_seq:-1, last_seqs:{}, last_snapshot:-1000, result_sent:false, start_requested:false, start_retry_at:current_time + 500, pause_votes:{}, owners:[]};
+    global.coop_battle = {ready:false, last_seq:-1, last_seqs:{}, last_snapshot:-1000, result_sent:false, start_requested:false, start_retry_at:current_time + 500, pause_votes:{}, owners:[],
+        balances:{}, balances_ready:false, previous_cards:{}, slots_ready:false};
     global.is_paused = true;
     game_set_speed(60, gamespeed_fps);
     obj_battle.speed_up = false;
@@ -88,6 +187,7 @@ function coop_battle_ready() {
         }
     }
     global.coop_battle.owners = _owners;
+    if (!coop_battle_prepare_loadouts()) return false;
     for (var _i = 0; _i < 2; _i++) {
         variable_struct_set(global.coop_battle.pause_votes, _owners[_i], false);
         variable_struct_set(global.coop_battle.last_seqs, _owners[_i], -1);
@@ -152,7 +252,9 @@ function coop_battle_command(_packet) {
             if (!coop_battle_can_run() || !variable_struct_exists(_data,"card_id") || !variable_struct_exists(_data,"slot_index")) return false;
             for (var _i = 0; _i < instance_number(obj_card_slot); _i++) {
                 var _slot = instance_find(obj_card_slot, _i);
-                if (_slot.slot_index == _data.slot_index && _slot.card_id == _data.card_id) return _slot.try_place_once(_world.x, _world.y, true);
+                if (_slot.slot_index == _data.slot_index && _slot.card_id == _data.card_id
+                    && (!coop_personal_loadouts() || _slot.coop_owner == _packet.player_id))
+                    return _slot.try_place_once(_world.x, _world.y, true, _packet.player_id);
             }
             return false;
         case "shovel":
@@ -173,7 +275,7 @@ function coop_battle_snapshot() {
     var _state = {background:{sprite:coop_snapshot_sprite(global.level_data.level_sprite),frame:obj_battle.map_spr_index},
         entities:[], slots:[], gems:[], players:[], platforms:[], bosses:[], audio:coop_audio_snapshot(),
         grid:{offset_x:global.grid_offset_x,offset_y:global.grid_offset_y,cell_x:global.grid_cell_size_x,cell_y:global.grid_cell_size_y,cols:global.grid_cols,rows:global.grid_rows},
-        flame:global.flame,paused:global.is_paused,pause_votes:global.coop_battle.pause_votes,game_over:global.game_over,outcome:"",level_name:global.level_data.name,
+        flame:global.flame,balances:global.coop_battle.balances,per_player_loadouts:coop_personal_loadouts(),paused:global.is_paused,pause_votes:global.coop_battle.pause_votes,game_over:global.game_over,outcome:"",level_name:global.level_data.name,
         battle_time:obj_battle.battle_time,time_limit:obj_battle.time_limit,wave:obj_battle.current_wave,total_waves:obj_battle.total_wave,
         waiting:!global.coop_battle.ready || !coop_battle_can_run(),connected:global.coop.all_connected(),last_seq:global.coop_battle.last_seq};
     for (var _i = 0; _i < instance_number(all); _i++) {
@@ -229,7 +331,7 @@ function coop_battle_snapshot() {
     for (var _i = 0; _i < instance_number(obj_card_slot); _i++) {
         var _s = instance_find(obj_card_slot, _i);
         if (!_s.info_got) with (_s) event_user(0);
-        array_push(_state.slots, {slot_index:_s.slot_index,card_id:_s.card_id,x:_s.x,y:_s.y,sprite:coop_snapshot_sprite(_s.card_spr),
+        array_push(_state.slots, {owner:variable_instance_exists(_s,"coop_owner") ? _s.coop_owner : "",slot_index:_s.slot_index,card_id:_s.card_id,x:_s.x,y:_s.y,sprite:coop_snapshot_sprite(_s.card_spr),
             preview:coop_snapshot_sprite(_s.place_preview),frame:0,cost:_s.current_cost,cooldown:_s.cooldown,remaining_cd:max(0,_s.cooldown - _s.cooldown_timer),ready:_s.is_ready,level:_s.clevel,shape:_s.cshape});
     }
     for (var _i = 0; _i < instance_number(all); _i++) {
