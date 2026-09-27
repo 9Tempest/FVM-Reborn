@@ -236,6 +236,16 @@ function fixture_screen_units() {
     global.fixture_screen_accept=true; _guest.packet(_frame);
     fixture_expect("host returning to shared screen ends guest result presentation before callback",!_guest.battle_started && !global.fixture_screen_battle_at_receive && global.fixture_screen.seq==8);
     fixture_expect("accepted shared screen releases previous battle snapshots",is_undefined(_guest.latest) && is_undefined(_guest.previous));
+    // Clearing pixels is not a campaign update or a preparation mutation.
+    var _before_profile=json_stringify(global.save_data);
+    _guest.result_saved=true; _guest.result_outcome="victory";
+    _guest.preparation=fixture_preparation("clear-screen-level",9,true,false);
+    _guest.loadout_draft=["toast_bread"]; var _before_prep=json_stringify(_guest.preparation);
+    _guest.packet({type:"screen_cleared"});
+    fixture_expect("screen-cleared event removes only view and preserves campaign rewards and selected deck",is_undefined(global.fixture_screen)
+        && json_stringify(global.save_data)==_before_profile && _guest.result_saved && _guest.result_outcome=="victory"
+        && json_stringify(_guest.preparation)==_before_prep && _guest.loadout_draft[0]=="toast_bread");
+    _guest.preparation=undefined;
     _guest.battle_started=true;
     _state.room_status="lobby"; _state.match_id=undefined; _guest.update_state(_state);
     fixture_expect("state restoration sets nonbattle mode before cached frame callback",!global.fixture_screen_battle_at_receive && !_guest.battle_started);
