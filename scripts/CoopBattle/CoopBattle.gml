@@ -167,7 +167,7 @@ function coop_snapshot_sprite(_sprite) {
 }
 function coop_battle_snapshot() {
     var _state = {background:{sprite:coop_snapshot_sprite(global.level_data.level_sprite),frame:obj_battle.map_spr_index},
-        entities:[], slots:[], gems:[], players:[], platforms:[],
+        entities:[], slots:[], gems:[], players:[], platforms:[], bosses:[],
         grid:{offset_x:global.grid_offset_x,offset_y:global.grid_offset_y,cell_x:global.grid_cell_size_x,cell_y:global.grid_cell_size_y,cols:global.grid_cols,rows:global.grid_rows},
         flame:global.flame,paused:global.is_paused,game_over:global.game_over,outcome:"",level_name:global.level_data.name,
         battle_time:obj_battle.battle_time,wave:obj_battle.current_wave,total_waves:obj_battle.total_wave,
@@ -175,14 +175,46 @@ function coop_battle_snapshot() {
     for (var _i = 0; _i < instance_number(all); _i++) {
         var _inst = instance_find(all, _i);
         if (!_inst.visible || !sprite_exists(_inst.sprite_index) || _inst.image_alpha <= 0) continue;
-        if (_inst.object_index == obj_card_slot || _inst.object_index == obj_shovel_slot || _inst.object_index == obj_game_over || _inst.object_index == obj_card_preview) continue;
+        if (_inst.object_index == obj_card_slot || _inst.object_index == obj_shovel_slot || _inst.object_index == obj_game_over || _inst.object_index == obj_card_preview || _inst.object_index == obj_boss_hpbar) continue;
         if (variable_instance_exists(_inst,"coop_gem_index")) continue;
         if (_inst.object_index == obj_player_character && !_inst.is_placed) continue;
         var _entity = {id:string(_inst.id),sprite:coop_snapshot_sprite(_inst.sprite_index),frame:_inst.image_index,x:_inst.x,y:_inst.y,
             xscale:_inst.image_xscale,yscale:_inst.image_yscale,angle:_inst.image_angle,alpha:_inst.image_alpha,blend:_inst.image_blend,depth:_inst.depth};
         if (variable_instance_exists(_inst,"hp")) _entity.hp = _inst.hp;
         if (variable_instance_exists(_inst,"max_hp")) _entity.max_hp = _inst.max_hp;
+        var _enemy = variable_instance_exists(_inst,"maxhp");
+        if (_enemy) _entity.max_hp = _inst.maxhp;
         if (variable_instance_exists(_inst,"coop_owner")) _entity.owner = _inst.coop_owner;
+        // These overlays exist only in Draw events and cannot be found as instances.
+        var _effects = [];
+        if (variable_instance_exists(_inst,"is_frozen") && _inst.is_frozen) {
+            var _ice = variable_instance_exists(_inst,"ice_sprite") ? _inst.ice_sprite : spr_mouse_frozen;
+            array_push(_effects, {sprite:coop_snapshot_sprite(_ice),frame:0,dx:0,dy:_enemy ? 50 : 95,xscale:1.8,yscale:1.8,alpha:1,blend:c_white});
+        }
+        if (variable_instance_exists(_inst,"is_scare") && _inst.is_scare) {
+            array_push(_effects, {sprite:coop_snapshot_sprite(spr_mouse_scared),frame:0,dx:-45,dy:-125,xscale:1.8,yscale:1.8,alpha:1,blend:c_white});
+        }
+        if (variable_instance_exists(_inst,"is_stun") && _inst.is_stun && variable_instance_exists(_inst,"stun_sprite")) {
+            var _frames = max(1,sprite_get_number(_inst.stun_sprite));
+            var _frame = (_frames - (floor(_inst.stun_timer / 5) mod _frames)) mod _frames;
+            array_push(_effects, {sprite:coop_snapshot_sprite(_inst.stun_sprite),frame:_frame,dx:-20,dy:-150,xscale:1.8,yscale:1.8,alpha:1,blend:c_white});
+        }
+        if (array_length(_effects) > 0) _entity.effects = _effects;
+        if (variable_instance_exists(_inst,"is_slowdown") && _inst.is_slowdown) _entity.blend = merge_colour(c_white,c_blue,0.5);
+        if (variable_instance_exists(_inst,"flash_value") && _inst.flash_value > 0) {
+            _entity.flash_alpha = clamp(_inst.flash_value / 200,0,1);
+            _entity.flash_colour = variable_instance_exists(_inst,"flash_color") ? _inst.flash_color : c_white;
+            _entity.flash_shader = "hit_effect_2"; // All current enemy shader_hit fields use this shader.
+        }
+        if (_enemy || variable_instance_exists(_inst,"plant_type")) {
+            var _type = _enemy ? "enemy" : _inst.plant_type;
+            var _visible = _enemy ? (variable_global_exists("enemy_hpbar") && global.enemy_hpbar) : (variable_global_exists("card_hpbar") && global.card_hpbar);
+            _entity.healthbar = {visible:_visible && !global.is_paused && _type != "coffee",
+                offset_y:_enemy ? -30 : (_type == "lilypad" ? 10 : (_type == "shield_outer" ? -50 : -20)),
+                colour:_enemy ? c_purple : (_type == "lilypad" ? c_yellow : (_type == "shield_outer" ? c_lime : c_green)),
+                shield_hp:variable_instance_exists(_inst,"shield_hp") ? _inst.shield_hp : 0,
+                shield_max_hp:variable_instance_exists(_inst,"shield_max_hp") ? _inst.shield_max_hp : 0};
+        }
         array_push(_state.entities, _entity);
     }
     array_sort(_state.entities, function(_a, _b) { return _b.depth - _a.depth; });
@@ -207,6 +239,17 @@ function coop_battle_snapshot() {
         var _axis_x = variable_instance_exists(_p,"move_axis") && _p.move_axis == "x";
         array_push(_state.platforms, {col:_p.start_col + (_axis_x ? _p.current_offset : 0),row:_p.start_row + (_axis_x ? 0 : _p.current_offset),
             width:_p.width,height:_p.length,shift_x:_axis_x ? _p.visual_x_shift : 0,shift_y:_axis_x ? 0 : _p.visual_y_shift});
+    }
+    for (var _i = 0; _i < instance_number(obj_boss_hpbar); _i++) {
+        var _bar = instance_find(obj_boss_hpbar,_i);
+        if (!instance_exists(_bar.target_boss)) continue;
+        var _boss_name = _bar.boss_name;
+        var _icon = _bar.icon_spr;
+        if (_bar.boss_id != "" && ds_map_exists(global.boss_list,_bar.boss_id)) {
+            _boss_name = global.boss_list[? _bar.boss_id].name;
+            _icon = global.boss_list[? _bar.boss_id].icon;
+        }
+        array_push(_state.bosses,{name:_boss_name,icon:coop_snapshot_sprite(_icon),hp:max(0,_bar.target_boss.hp),max_hp:_bar.target_boss.maxhp,x:_bar.x,y:_bar.y,width:_bar.bar_width});
     }
     if (global.game_over && instance_exists(obj_game_over)) {
         _state.outcome = obj_game_over.sprite_index == spr_win ? "victory" : "defeat";

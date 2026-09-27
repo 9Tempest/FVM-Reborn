@@ -79,9 +79,17 @@ function bridge_run() {
     bridge_expect("gem uses the invoking player's character", global.bridge_gems == 1 && global.bridge_gem_owner == "guest");
     _battle.sprite_index = spr_win; _battle.depth = 100;
     coop_player_instance("host").sprite_index = spr_win; coop_player_instance("host").depth = -100;
+    _battle.maxhp = 500; _battle.hp = 250; _battle.is_frozen = true; _battle.ice_sprite = spr_win;
+    _battle.is_scare = true; _battle.is_stun = true; _battle.stun_sprite = spr_win; _battle.stun_timer = 10;
+    _battle.flash_value = 100; _battle.flash_color = c_red; global.enemy_hpbar = true;
+    var _boss_bar = instance_create_depth(0,0,0,obj_boss_hpbar);
+    _boss_bar.target_boss = _battle; _boss_bar.boss_id = ""; _boss_bar.boss_name = "Fixture Boss";
+    _boss_bar.icon_spr = spr_win; _boss_bar.bar_width = 1200;
     var _snapshot = coop_battle_snapshot();
     bridge_expect("snapshot contains shared HUD and stable sprite names", _snapshot.flame == 250 && _snapshot.slots[0].sprite == "spr_win" && _snapshot.players[1].player_id == "guest" && _snapshot.slots[0].preview == "");
     bridge_expect("entities are sorted back to front", array_length(_snapshot.entities) == 2 && _snapshot.entities[0].depth == 100 && _snapshot.entities[1].depth == -100);
+    bridge_expect("enemy maxhp and transient effects survive snapshot", _snapshot.entities[0].max_hp == 500 && array_length(_snapshot.entities[0].effects) == 3 && _snapshot.entities[0].flash_alpha == 0.5 && _snapshot.entities[0].flash_shader == "hit_effect_2");
+    bridge_expect("custom boss health bar survives snapshot", array_length(_snapshot.bosses) == 1 && _snapshot.bosses[0].hp == 250 && _snapshot.bosses[0].max_hp == 500);
     bridge_expect("snapshot round-trips JSON", is_struct(json_parse(json_stringify(_snapshot))));
     var _over = instance_create_depth(0,0,0,obj_game_over); _over.sprite_index = spr_win;
     var _ui = instance_create_depth(0,0,0,obj_battle_pause_manager);

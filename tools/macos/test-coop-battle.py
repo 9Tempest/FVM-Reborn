@@ -45,7 +45,7 @@ def prepare(root, app_id):
     shutil.copyfile(HERE / "coop-battle-fixture.gml", path.with_suffix(".gml"))
     yyp["resources"].append({"id":{"name":name,"path":str(path.relative_to(project))}})
     template = helpers.read_yy(REPO / "objects/obj_battle_pause_manager/obj_battle_pause_manager.yy")
-    for name in ("obj_autosave_tests", "obj_battle", "obj_player_character", "obj_card_slot", "obj_shovel_slot", "obj_platform", "obj_game_over", "obj_card_preview", "obj_battle_pause_manager", "obj_fixture_gem"):
+    for name in ("obj_autosave_tests", "obj_battle", "obj_player_character", "obj_card_slot", "obj_shovel_slot", "obj_platform", "obj_game_over", "obj_card_preview", "obj_battle_pause_manager", "obj_boss_hpbar", "obj_fixture_gem"):
         obj = copy.deepcopy(template)
         obj.update({"%Name":name,"name":name,"parent":parent})
         obj["eventList"] = []
@@ -56,7 +56,7 @@ def prepare(root, app_id):
         if name == "obj_autosave_tests": path.with_name("Create_0.gml").write_text("bridge_run();\n")
         if name == "obj_player_character": path.with_name("Create_0.gml").write_text("bridge_player_create();\n")
         yyp["resources"].append({"id":{"name":name,"path":str(path.relative_to(project))}})
-    for name in ("spr_win", "spr_lose"):
+    for name in ("spr_win", "spr_lose", "spr_mouse_frozen", "spr_mouse_scared"):
         shutil.copytree(REPO / "sprites" / name, project / "sprites" / name)
         path = project / "sprites" / name / (name + ".yy")
         meta = helpers.read_yy(path)
