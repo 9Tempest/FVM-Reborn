@@ -13,9 +13,9 @@ for architecture in arm64 x86_64; do
   xcrun clang++ -std=c++17 -fobjc-arc -fvisibility=hidden \
     -Wall -Wextra -Werror -Wno-deprecated-declarations -O2 \
     -mmacosx-version-min=11.0 -arch "$architecture" -dynamiclib \
-    "$native_dir/FvmNativeSupport.mm" \
+    "$native_dir/FvmNativeSupport.mm" "$native_dir/GameFrameCodec.mm" \
     -I"$native_dir/../FvmNativeSupport" -I"$native_dir/vendor/libarchive" \
-    -framework Cocoa -larchive.2 \
+    -framework Cocoa -framework ImageIO -framework CoreGraphics -larchive.2 \
     -Wl,-exported_symbols_list,"$native_dir/exports.txt" \
     -install_name @rpath/libFvmNativeSupport.dylib \
     -o "$temporary_dir/FvmNativeSupport.$architecture.dylib"

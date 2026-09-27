@@ -40,7 +40,7 @@ def prepare(root, app_id):
         return path
 
     for kind, names in (
-        ("scripts", ["CoopUI", "add_to_deck", "deck_get_card_data"]),
+        ("scripts", ["CoopUI", "CoopScreen", "add_to_deck", "deck_get_card_data"]),
         ("sprites", ["spr_slot", "spr_flame", "spr_lose", "spr_player_character", "spr_double_long_bao", "spr_coke_bomb", "spr_mouse_clip"]),
         ("fonts", ["font_yuan"]),
         ("shaders", ["hit_effect_2"]),

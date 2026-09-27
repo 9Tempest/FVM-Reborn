@@ -702,6 +702,7 @@
     {"id": {"name": "CoopAudio", "path": "scripts/CoopAudio/CoopAudio.yy"}},
     {"id": {"name": "CoopUI", "path": "scripts/CoopUI/CoopUI.yy"}},
     {"id": {"name": "CoopSession", "path": "scripts/CoopSession/CoopSession.yy"}},
+    {"id": {"name": "CoopScreen", "path": "scripts/CoopScreen/CoopScreen.yy"}},
     {"id": {"name": "CoopTransport", "path": "scripts/CoopTransport/CoopTransport.yy"}},
     {"id":{"name":"WindowsNative","path":"extensions/WindowsNative/WindowsNative.yy",},},
     {"id":{"name":"font_hei","path":"fonts/font_hei/font_hei.yy",},},

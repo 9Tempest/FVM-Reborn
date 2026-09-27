@@ -11,3 +11,4 @@ _SetNativeLogFilePath
 _DisableIme
 _EnableIme
 _UnzipMapFile
+_EncodeGameFrame

@@ -1,0 +1,10 @@
+{
+  "$GMScript":"v1",
+  "%Name":"CoopScreen",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"CoopScreen",
+  "parent":{"name":"Util","path":"folders/Util.yy"},
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0"
+}

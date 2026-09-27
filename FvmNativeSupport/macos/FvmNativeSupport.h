@@ -20,3 +20,4 @@ FVM_EXPORT double SetNativeLogFilePath(const char *path);
 FVM_EXPORT double DisableIme(double window_handle);
 FVM_EXPORT double EnableIme(double window_handle);
 FVM_EXPORT double UnzipMapFile(const char *archive_path, const char *destination);
+FVM_EXPORT const char *EncodeGameFrame(const char *pixels, double width, double height);

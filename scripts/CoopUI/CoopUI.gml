@@ -225,6 +225,7 @@ function coop_ui_step() {
         return;
     }
     if (_c.active && is_struct(coop_get(_c,"preparation"))) { coop_loadout_step(); return; }
+    if (coop_screen_visible()) { coop_screen_step(); return; }
     if (!_c.active) {
         if (coop_ui_hit(320,400,560,84)) _c.create();
         if (coop_ui_hit(1040,400,560,84)) _c.resume();
@@ -270,6 +271,7 @@ function coop_ui_draw() {
         coop_guest_draw(); return;
     }
     if (_c.active && is_struct(coop_get(_c,"preparation"))) { coop_loadout_draw(); return; }
+    if (coop_screen_visible()) { coop_screen_draw(); return; }
     draw_clear(make_colour_rgb(10,24,35));
     draw_set_colour(make_colour_rgb(17,43,55)); draw_roundrect_ext(235,245,1685,890,30,30,false);
     coop_ui_text(960,130,"一起守住这桌美食",2.6,make_colour_rgb(250,206,111),fa_center,1600);
@@ -371,7 +373,7 @@ function coop_guest_draw() {
         var _old=coop_get(_c.previous,"entities",[]);
         for (var _i=0;_i<array_length(_old);_i++) variable_struct_set(coop_previous_entities,_old[_i].id,_old[_i]);
     }
-    var _blend_time=clamp((current_time-_c.received_at)/100,0,1);
+    var _blend_time=clamp((current_time-_c.received_at)/max(16,coop_get(_s,"snapshot_interval_ms",33)),0,1);
     for (var _i=0;_i<array_length(_entities);_i++) {
         var _e=_entities[_i],_sprite=asset_get_index(_e.sprite);
         if (!sprite_exists(_sprite)) continue;

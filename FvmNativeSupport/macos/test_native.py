@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Integration tests against the actual GameMaker ABI; no third-party packages."""
 import binascii
+import base64
 import ctypes
 import json
 from pathlib import Path
@@ -25,6 +26,8 @@ for name, arguments in SIGNATURES.items():
     function = getattr(LIBRARY, name)
     function.restype = ctypes.c_double
     function.argtypes = [ctypes.c_double] if arguments == "double" else [ctypes.c_char_p] * arguments
+LIBRARY.EncodeGameFrame.restype = ctypes.c_char_p
+LIBRARY.EncodeGameFrame.argtypes = [ctypes.c_char_p, ctypes.c_double, ctypes.c_double]
 
 
 def call(name, *arguments):
@@ -58,10 +61,23 @@ class NativeIntegrationTests(unittest.TestCase):
 
     def test_exact_exports_and_universal_architectures(self):
         symbols = subprocess.check_output(["xcrun", "nm", "-gUj", "-arch", platform.machine(), str(LIBRARY_PATH)], text=True)
-        self.assertEqual(set(symbols.split()), {"_" + name for name in SIGNATURES})
+        self.assertEqual(set(symbols.split()), {"_" + name for name in SIGNATURES} | {"_EncodeGameFrame"})
         architectures = subprocess.check_output(["xcrun", "lipo", "-archs", str(LIBRARY_PATH)], text=True)
         self.assertEqual(set(architectures.split()), {"arm64", "x86_64"})
         subprocess.run(["codesign", "--verify", "--strict", str(LIBRARY_PATH)], check=True)
+
+    def test_game_canvas_encoder_returns_jpeg_without_files(self):
+        pixels = base64.b64encode(bytes((255, 0, 0, 255)) * 32 * 18)
+        result = LIBRARY.EncodeGameFrame(pixels, 32, 18)
+        jpeg = base64.b64decode(result, validate=True)
+        self.assertTrue(jpeg.startswith(b"\xff\xd8\xff"))
+        self.assertTrue(jpeg.endswith(b"\xff\xd9"))
+
+    def test_game_canvas_encoder_bounds_and_buffer_length(self):
+        for pixels, width, height in ((None, 1, 1), (b"AA==", 1, 1), (b"@@@@", 1, 1),
+                                      (b"", 961, 540), (b"", 960, 541),
+                                      (b"", float("nan"), 1), (b"", 1.5, 1)):
+            self.assertEqual(LIBRARY.EncodeGameFrame(pixels, width, height), b"")
 
     def test_background_activity_lifecycle_preserves_normal_sleep(self):
         executable = self.root / "activity-test"
