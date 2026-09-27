@@ -50,6 +50,7 @@ function CoopSession() constructor {
     transport.idle_timeout_ms = 15000;
     active = false;
     connected = false;
+    shared_screen_supported = false;
     role = "";
     player_id = "";
     players = [];
@@ -270,6 +271,7 @@ function CoopSession() constructor {
     static reset_entry = function() {
         // Starting another room must never reuse the preceding room's credentials.
         transport.close();
+        coop_screen_reset(); shared_screen_supported=false;
         connected=false; resume_token=""; room_id=""; player_id=""; role="";
         players=[]; match_id=""; room_status="lobby"; battle_started=false; start_request_id="";
         seq=0; snapshot_tick=0; applied_command_id=0; inputs_pending=[];
@@ -384,6 +386,7 @@ function CoopSession() constructor {
     };
     static network_lost = function() {
         connected = false;
+        coop_screen_reset();
         // Server state is authoritative after reconnect. Never replay Ready or
         // an old selection onto a possibly different preparation automatically.
         loadout_pending=false; loadout_request_id=""; loadout_attempt=undefined;
@@ -411,10 +414,17 @@ function CoopSession() constructor {
         players = coop_get(_s,"players",players);
         room_status = coop_get(_s,"room_status",room_status);
         personal_loadouts_supported=coop_get(coop_get(_s,"features"),"personal_loadouts",false);
+        shared_screen_supported=coop_get(coop_get(_s,"features"),"shared_screen",false);
         match_config=coop_clone(coop_get(_s,"config",{}));
         var _level=coop_get(_s,"level_id","");
         if (is_string(_level)) match_config.level_id=_level;
         sync_preparation(coop_get(_s,"preparation"),_initial);
+        var _screen=coop_get(_s,"shared_screen");
+        if (role=="guest" && room_status!="running" && !is_struct(preparation) && is_struct(_screen)) {
+            battle_started=false;
+            if (coop_screen_receive(_screen)) { latest=undefined; previous=undefined; }
+        }
+        else coop_screen_reset();
         var _m = coop_get(_s,"match_id","");
         match_id = is_string(_m) ? _m : "";
         for (var _i = 0; _i < array_length(players); _i++) {
@@ -506,6 +516,7 @@ function CoopSession() constructor {
             } else status=both_loadouts_ready() ? "双方已准备，正在开始…" : "分别选择卡牌，然后点击准备";
             break;
         case "match_started":
+            coop_screen_reset();
             var _new_match = match_id != _p.match_id || !battle_started;
             update_state(_p.state);
             match_id = _p.match_id; room_status = "running";
@@ -526,6 +537,17 @@ function CoopSession() constructor {
             for (var _i = array_length(inputs_pending)-1; _i >= 0; _i--) if (inputs_pending[_i].seq == _p.seq) array_delete(inputs_pending,_i,1);
             break;
         case "snapshot": if (_p.match_id == match_id) receive_snapshot(_p.state); break;
+        case "screen_frame":
+            if (role=="guest" && room_status!="running" && !is_struct(preparation)) {
+                // A validated menu frame means the host has left the result
+                // screen. Follow it without requiring a guest-side extra click.
+                var _was_battle=battle_started; battle_started=false;
+                if (coop_screen_receive(_p)) { latest=undefined; previous=undefined; }
+                else battle_started=_was_battle;
+            }
+            break;
+        case "screen_frame_ack": coop_screen_ack(_p); break;
+        case "screen_cleared": coop_screen_reset(); break;
         case "campaign_updated":
             if (role == "guest") {
                 var _updated = coop_get(coop_get(_p,"profiles"),player_id);
@@ -613,6 +635,7 @@ function CoopSession() constructor {
         if (role != "host" || !battle_started || _p.match_id != match_id || _p.command_id <= applied_command_id) return;
         coop_battle_command(_p);
         applied_command_id = _p.command_id;
+        if (variable_global_exists("coop_battle") && is_struct(global.coop_battle)) global.coop_battle.snapshot_requested = true;
     };
     static send_input = function(_action,_payload) {
         if (!active || !connected || !battle_started || room_status != "running") return false;
@@ -709,6 +732,7 @@ function CoopSession() constructor {
             if (is_struct(result_request) || is_struct(campaign_request)) { status = "正在等待主机确认存档，请稍后再退出"; return false; }
         }
         leaving=true; send("leave"); transport.close(); connected=false; active=false;
+        coop_screen_reset(); shared_screen_supported=false;
         if (is_struct(solo)) {
             global.save_data=solo.data; global.save_slot=solo.slot; global.player_name=solo.name; global.total_time=solo.total_time;
             global.save_last_json=solo.last_json; global.save_last_progress=solo.last_progress;
