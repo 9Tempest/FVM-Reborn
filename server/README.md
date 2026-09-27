@@ -12,7 +12,7 @@ campaign snapshots are identical. Existing single-player save files are untouche
 
 Update both game clients and the installed service together. The wire envelope
 remains protocol 1, and new state replies advertise
-`features.personal_loadouts:true`. The new client requires this feature; the new
+`features.personal_loadouts:true` and `features.shared_screen:true`. The new client requires the loadout feature; the new
 server rejects the old direct `start_match` flow. Updating the checkout does not
 update the installed LaunchAgent service; rerun `manage.py install` after ending
 the current session, as described below.
@@ -109,6 +109,8 @@ its complete save data so that game-side validation and campaign rules can run.
 | Either player `set_loadout {preparation_id,revision,deck,ready}` | `loadout_state {state,duplicate}`; edits only the sender's selection |
 | Host `cancel_preparation {preparation_id,revision}` | `loadout_state {state,duplicate}` with `state.preparation:null` |
 | Host `start_match {level_id,preparation_id,revision,config?:{}}` | `match_started {match_id,state,duplicate}`; requires both players connected and ready |
+| Host `screen_frame {seq,room,width,height,encoding,image,title?}` | `screen_frame_ack {seq,accepted,duplicate,dropped?}`; volatile menu image, outside preparation/battle only |
+| Host `screen_clear {}` | `screen_cleared {room_id,stream_id}`; clears cached/pending menu images in any phase; guest gets the same event without request ID |
 | Local admin `backup {}` | `backup_created {filename}` |
 
 `new_invite` is an alias returning `room_invite`. `profiles` in requests maps every
@@ -237,6 +239,35 @@ most 100,000 commands and a sequence is at most 2,147,483,647. Inputs are reject
 while the host is disconnected. The host must pause simulation while either player
 is disconnected and the guest must display a waiting state.
 
+## Shared menu images
+
+The host may share only `room_menu`, `room_map`, `room_tower_cake` and
+`room_laboratory`, while the room is `lobby` or `finished` and has no preparation.
+The co-op lobby containing invitation controls, the loadout screen and battle are
+not eligible. The game captures its own render surface, not the desktop, and the
+guest views it without remote input control. Frames never write campaign data.
+
+`screen_frame` uses a positive integer `seq`, dimensions up to 960×540,
+`encoding:"jpeg"` or `"png"`, and raw base64 `image` (no data-URI prefix, at most
+700 KiB of encoded text). The optional title is at most 160 characters. The service
+validates image format headers and dimensions, and accepts at most four frames per
+second. A guest receives `screen_frame` with those fields plus `stream_id`, a new
+identifier for each host connection. Deduplicate by `(stream_id,seq)` because the
+host sequence may restart after reconnecting. Same-sequence identical retries are
+acknowledged without rebroadcast; changed content returns `screen_conflict`.
+Older or over-rate frames return `accepted:false` with `dropped:"out_of_order"`
+or `"rate_limited"`, respectively.
+
+`state.shared_screen` is the latest accepted image or null. This cache holds at
+most 32 recent rooms in memory, supports guest reconnection and is lost on server
+restart. Preparing or starting a match clears it. When leaving a shared menu for
+the private co-op lobby, the host sends `screen_clear`. This clears the room cache
+and pending menu frame, then sends a reliable `screen_cleared` event behind any
+already in-flight image. Thus an old image cannot arrive after its clear event.
+Only the room host may clear; it is allowed in every room phase and changes no
+profile, preparation, ready state or battle checkpoint. The host ACK repeats its
+request ID. A client/server update is needed to use this explicit clear message.
+
 ## Snapshots, results and recovery
 
 Host snapshot:
@@ -258,7 +289,10 @@ The current game snapshot includes `per_player_loadouts:true`,
 1-based `slot_index`. The guest filters slots and reads the balance by its own
 identity. The top-level legacy `flame` field remains the host's balance.
 
-Broadcasts can run at 10–15 Hz. The first snapshot is durable, subsequent updates
+The game schedules ordinary battle snapshots at approximately 33 ms intervals
+(about 30 Hz), sends confirmed inputs on the next game step, and advertises
+`snapshot_interval_ms` for guest interpolation. This is a scheduling interval,
+not an end-to-end network latency guarantee. The first snapshot is durable, subsequent updates
 are cached in memory and flushed at most approximately every second during normal
 streaming. `durable:true` requests an immediate SQLite commit. The ack's
 `persisted:true` means that snapshot is on disk; `false` means only memory/broadcast.
@@ -266,6 +300,15 @@ The latest cache is used for reconnect/get_state, and flushed on disconnect and
 graceful server shutdown. After abrupt server termination, at most approximately
 one second of the visual checkpoint stream can be lost; every acknowledged input,
 campaign save and match result remains committed independently.
+
+Ordinary battle snapshots and menu images share a bounded visual sender: at most
+one frame is in flight and one newer pending frame replaces any older pending
+frame. Reliable messages use the same send lock. Terminal `game_over` snapshots
+are reliable; preparation, match start and match result transitions discard stale
+pending visuals. A direct defeat result without a terminal image also clears old
+battle frames. Input commands are committed before being forwarded to the host,
+and that forwarding precedes waiting for a slow guest's ACK write. These changes
+retain SQLite FULL durability and bound stale-frame backlog under backpressure.
 
 Host result:
 
@@ -292,7 +335,7 @@ State has this exact shape:
   "players":[{"player_id":"PLAYER_ID","role":"host","name":"Host","profile":{},"revision":1,"last_seq":0,"connected":true}],
   "checkpoint":{"tick":120,"applied_command_id":3,"state":{}},
   "pending_commands":[],"pending_commands_more":false,"result":null,
-  "features":{"personal_loadouts":true},"preparation":null
+  "features":{"personal_loadouts":true,"shared_screen":true},"preparation":null,"shared_screen":null
 }
 ```
 
@@ -351,7 +394,7 @@ tokens are bearer credentials and should be shared only with the invited player.
 The server trusts authenticated host simulation; it does not independently verify
 game balance or prevent a host administrator from changing their own database.
 
-The 16 server integration tests exercise real socket clients, authorization, one-use/expired invitations,
+The 23 server integration tests exercise real socket clients, authorization, one-use/expired invitations,
 role restrictions, sequence deduplication, snapshots, presence/resume, forced
 process restart, durable campaign writes, duplicate results, transaction rollback,
 safe HTTP routes, frame limits, consistent backups, application heartbeats and
@@ -361,11 +404,18 @@ deck fallback, disconnect/takeover/restart invalidation, immutable match config,
 duplicate start receipts across restarts, transaction rollback of edits and their
 receipts, campaign changes versus play time, and additive migration of existing
 rooms. The schema adds preparation/cache/receipt tables and advances to version 2
-without replacing profiles, rooms, matches or credentials.
+without replacing profiles, rooms, matches or credentials. Streaming cases cover
+image authorization/format/dimensions/rate, volatile reconnect caching, preparation
+and battle isolation, controlled slow socket writes, latest-frame replacement,
+input delivery before a held ACK, final result ordering, and explicit screen clear
+without changing game state or restoring stale images after reconnect.
 
 The new protocol has also passed 38/38 checks from a real native GameMaker client
-and 96/96 `CoopSession` native checks using isolated projects and databases. Full
-game regression for the individual-loadout revision is still in progress; these
+and 122/122 `CoopSession` native checks using isolated projects and databases.
+The native loadout UI has passed 23/23 checks and shared-screen/codec fixtures
+27/27. Two isolated full-game clients on one Mac have passed 52/52 local WS checks,
+including actual menu/map/laboratory image sharing and battle settlement. Final
+public WSS full-game regression for this revision is still in progress; these
 checks do not establish two-machine or all-level gameplay acceptance.
 
 ## Optional Mac login service and free external connectivity
