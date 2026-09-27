@@ -20,7 +20,198 @@ function coop_ui_sprite(_name,_frame,_x,_y,_w,_h,_alpha=1) {
     var _l=sprite_get_bbox_left(_s),_t=sprite_get_bbox_top(_s);
     var _sw=sprite_get_bbox_right(_s)-_l+1,_sh=sprite_get_bbox_bottom(_s)-_t+1;
     var _scale=min(_w/max(1,_sw),_h/max(1,_sh));
-    draw_sprite_part_ext(_s,_frame,_l,_t,_sw,_sh,_x-_sw*_scale/2,_y-_sh*_scale/2,_scale,_scale,c_white,_alpha);
+    // Let GameMaker account for texture-page trimming. Cropping the source by
+    // its mask rectangle can sample neighboring frames on trimmed card sprites.
+    var _dx=_x-(_l+_sw/2-sprite_get_xoffset(_s))*_scale;
+    var _dy=_y-(_t+_sh/2-sprite_get_yoffset(_s))*_scale;
+    draw_sprite_ext(_s,_frame,_dx,_dy,_scale,_scale,0,c_white,_alpha);
+}
+/// Both rendering and input use this same local-owner list. Snapshot array order
+/// must never make the guest select or spend from the host's slots.
+function coop_guest_slots(_snapshot,_player_id) {
+    var _all=coop_get(_snapshot,"slots",[]),_result=[];
+    var _personal=coop_get(_snapshot,"per_player_loadouts",false);
+    for (var _i=0;_i<array_length(_all);_i++) {
+        if (!_personal || coop_get(_all[_i],"owner","")==_player_id) array_push(_result,_all[_i]);
+    }
+    array_sort(_result,function(_a,_b) { return coop_get(_a,"slot_index",0)-coop_get(_b,"slot_index",0); });
+    return _result;
+}
+function coop_guest_flame(_snapshot,_player_id) {
+    var _fallback=coop_get(_snapshot,"per_player_loadouts",false) ? 0 : coop_get(_snapshot,"flame",0);
+    return coop_get(coop_get(_snapshot,"balances",{}),_player_id,_fallback);
+}
+function coop_loadout_state() {
+    var _prep=coop_get(global.coop,"preparation",{}),_id=coop_get(_prep,"id","");
+    if (!variable_global_exists("coop_loadout_ui") || global.coop_loadout_ui.preparation_id!=_id) {
+        global.coop_loadout_ui={preparation_id:_id,page:0,notice:"",notice_until:0};
+        texture_prefetch("cards");
+    }
+    return global.coop_loadout_ui;
+}
+function coop_loadout_cards() {
+    var _cards=[],_unlocked=global.save_data.unlocked_cards;
+    for (var _i=0;_i<array_length(_unlocked);_i++) {
+        var _entry=_unlocked[_i],_data=deck_get_card_data(_entry.id,_entry.shape);
+        if (_data==noone) continue;
+        var _shape=get_plant_shape_data(_entry.id,_entry.shape);
+        array_push(_cards,{id:_entry.id,shape:_entry.shape,level:_entry.level,
+            name:_shape[? "name"],sprite:_data[? "sprite"],cost:_data[? "cost"]});
+    }
+    return _cards;
+}
+function coop_loadout_card(_cards,_id) {
+    for (var _i=0;_i<array_length(_cards);_i++) if (_cards[_i].id==_id) return _cards[_i];
+    return undefined;
+}
+function coop_loadout_toggle(_card_id) {
+    var _c=global.coop,_prep=coop_get(_c,"preparation",{}),_ui=coop_loadout_state();
+    var _own=coop_get(coop_get(_prep,"selections",{}),_c.player_id,{});
+    if (!_c.connected || coop_get(_c,"loadout_pending",false) || coop_get(_own,"ready",false)) return false;
+    var _draft=coop_get(_c,"loadout_draft",[]),_next=[],_found=false;
+    for (var _i=0;_i<array_length(_draft);_i++) {
+        if (_draft[_i]==_card_id) _found=true; else array_push(_next,_draft[_i]);
+    }
+    if (!_found) {
+        if (array_length(_next)>=coop_get(_prep,"slot_limit",deck_slot_max())) {
+            _ui.notice="卡槽已满，点击已选卡牌可以移除"; _ui.notice_until=current_time+2500;
+            return false;
+        }
+        array_push(_next,_card_id);
+    }
+    return _c.set_loadout(_next,false);
+}
+function coop_loadout_step() {
+    var _c=global.coop,_prep=_c.preparation,_ui=coop_loadout_state();
+    var _cards=coop_loadout_cards(),_pages=max(1,ceil(array_length(_cards)/21));
+    _ui.page=clamp(_ui.page,0,_pages-1);
+    if ((keyboard_check_pressed(vk_left) || coop_ui_hit(78,879,175,54)) && _ui.page>0) _ui.page--;
+    if ((keyboard_check_pressed(vk_right) || coop_ui_hit(993,879,175,54)) && _ui.page<_pages-1) _ui.page++;
+    if (coop_ui_hit(48,978,220,65)) { _c.leave(); return; }
+    var _pending=coop_get(_c,"loadout_pending",false);
+    if (_c.role=="host" && !_pending && coop_ui_hit(290,978,230,65)) { _c.cancel_preparation(); return; }
+    var _own=coop_get(coop_get(_prep,"selections",{}),_c.player_id,{});
+    var _ready=coop_get(_own,"ready",false),_draft=coop_get(_c,"loadout_draft",[]);
+    if (!_pending && _c.connected && (_ready || _c.all_connected()) && array_length(_draft)>0 && coop_ui_hit(1340,978,530,65)) {
+        _c.set_loadout(_draft,!_ready); return;
+    }
+    if (_pending || _ready || !_c.connected) return;
+    if (array_length(_draft)>0 && coop_ui_hit(1740,207,105,44)) { _c.set_loadout([],false); return; }
+    for (var _i=_ui.page*21;_i<min(array_length(_cards),(_ui.page+1)*21);_i++) {
+        var _cell=_i mod 21,_x=78+(_cell mod 7)*158,_y=264+(_cell div 7)*201;
+        if (coop_ui_hit(_x,_y,144,183)) { coop_loadout_toggle(_cards[_i].id); return; }
+    }
+    var _limit=max(1,coop_get(_prep,"slot_limit",deck_slot_max())),_cols=max(7,ceil(_limit/3)),_cw=560/_cols;
+    for (var _i=0;_i<array_length(_draft);_i++) {
+        if (coop_ui_hit(1266+(_i mod _cols)*_cw,273+(_i div _cols)*101,_cw-6,91)) {
+            coop_loadout_toggle(_draft[_i]); return;
+        }
+    }
+}
+function coop_loadout_draw() {
+    var _c=global.coop,_prep=_c.preparation,_ui=coop_loadout_state(),_cards=coop_loadout_cards();
+    var _draft=coop_get(_c,"loadout_draft",[]),_selections=coop_get(_prep,"selections",{});
+    var _own=coop_get(_selections,_c.player_id,{}),_ready=coop_get(_own,"ready",false);
+    var _pending=coop_get(_c,"loadout_pending",false),_limit=max(1,coop_get(_prep,"slot_limit",deck_slot_max()));
+    var _mate=undefined;
+    for (var _i=0;_i<array_length(_c.players);_i++) if (_c.players[_i].player_id!=_c.player_id) _mate=_c.players[_i];
+    var _other=coop_get(_selections,coop_get(_mate,"player_id",""),{}),_other_deck=coop_get(_other,"deck",[]);
+    var _other_ready=coop_get(_other,"ready",false),_pages=max(1,ceil(array_length(_cards)/21));
+    _ui.page=clamp(_ui.page,0,_pages-1);
+    draw_clear(make_colour_rgb(9,22,32));
+    draw_set_alpha(1); draw_set_colour(make_colour_rgb(19,45,56));
+    draw_roundrect_ext(48,176,1202,948,22,22,false);
+    draw_roundrect_ext(1234,176,1872,948,22,22,false);
+    coop_ui_text(60,70,"各自选卡，一起出发",2.1,make_colour_rgb(250,206,111),fa_left,1200);
+    coop_ui_text(62,133,coop_get(_prep,"level_name","合作关卡"),1.05,c_white,fa_left,1140);
+    coop_ui_text(1855,70,"两人独立卡组 / 各获 60% 火苗",0.85,make_colour_rgb(152,219,202),fa_right,660);
+    coop_ui_text(1855,123,_c.all_connected() ? "队友在线" : "等待队友重新连接",0.8,_c.all_connected() ? c_aqua : c_yellow,fa_right,580);
+    coop_ui_text(78,217,"共享卡库",1.15,c_white,fa_left,300);
+    coop_ui_text(1170,217,"卡牌等级与形态使用共同进度",0.72,make_colour_rgb(159,190,199),fa_right,650);
+    for (var _i=_ui.page*21;_i<min(array_length(_cards),(_ui.page+1)*21);_i++) {
+        var _card=_cards[_i],_cell=_i mod 21,_x=78+(_cell mod 7)*158,_y=264+(_cell div 7)*201;
+        var _selected=array_get_index(_draft,_card.id),_hover=point_in_rectangle(mouse_x,mouse_y,_x,_y,_x+144,_y+183);
+        draw_set_alpha(1); draw_set_colour(_selected>=0 ? make_colour_rgb(54,103,104) : (_hover ? make_colour_rgb(37,75,85) : make_colour_rgb(26,59,71)));
+        draw_roundrect_ext(_x,_y,_x+144,_y+183,12,12,false);
+        if (_selected>=0) {
+            draw_set_colour(make_colour_rgb(245,203,110)); draw_roundrect_ext(_x+1,_y+1,_x+143,_y+182,12,12,true);
+        }
+        coop_ui_sprite(spr_slot,0,_x+72,_y+69,98,112);
+        coop_ui_sprite(_card.sprite,0,_x+72,_y+68,86,89);
+        if (_selected>=0) {
+            draw_set_colour(make_colour_rgb(20,48,60)); draw_roundrect_ext(_x+6,_y+6,_x+38,_y+30,7,7,false);
+            coop_ui_text(_x+22,_y+18,string(_selected+1),0.65,make_colour_rgb(250,206,111),fa_center,28);
+        }
+        coop_ui_text(_x+72,_y+140,_card.name,0.73,c_white,fa_center,134);
+        coop_ui_text(_x+12,_y+166,"Lv."+string(_card.level),0.62,make_colour_rgb(177,216,216),fa_left,63);
+        coop_ui_sprite(spr_flame,0,_x+91,_y+166,17,22);
+        coop_ui_text(_x+133,_y+166,string(_card.cost),0.65,make_colour_rgb(250,206,111),fa_right,42);
+    }
+    if (array_length(_cards)==0) coop_ui_text(625,535,"正在同步共同卡库…",1.2,c_white,fa_center,950);
+    coop_ui_button(78,879,175,54,"上一页",_ui.page>0);
+    coop_ui_text(625,906,string(_ui.page+1)+" / "+string(_pages)+"  共 "+string(array_length(_cards))+" 张",0.78,c_white,fa_center,620);
+    coop_ui_button(993,879,175,54,"下一页",_ui.page<_pages-1);
+    coop_ui_text(1266,221,"你的卡组  "+string(array_length(_draft))+" / "+string(_limit),1.03,c_white,fa_left,445);
+    coop_ui_button(1740,207,105,44,"清空",!_pending && !_ready && _c.connected && array_length(_draft)>0);
+    var _cols=max(7,ceil(_limit/3)),_cw=560/_cols;
+    for (var _i=0;_i<_limit;_i++) {
+        var _x=1266+(_i mod _cols)*_cw,_y=273+(_i div _cols)*101;
+        draw_set_colour(make_colour_rgb(10,31,42)); draw_set_alpha(1); draw_roundrect_ext(_x,_y,_x+_cw-6,_y+91,8,8,false);
+        coop_ui_text(_x+7,_y+12,string(_i+1),0.48,make_colour_rgb(104,151,160),fa_left,25);
+        if (_i<array_length(_draft)) {
+            var _card=coop_loadout_card(_cards,_draft[_i]);
+            if (is_struct(_card)) {
+                coop_ui_sprite(_card.sprite,0,_x+(_cw-6)/2,_y+41,_cw-20,55);
+                coop_ui_text(_x+(_cw-6)/2,_y+78,_card.name,0.5,c_white,fa_center,_cw-12);
+            }
+        } else coop_ui_text(_x+(_cw-6)/2,_y+48,"+",1,make_colour_rgb(55,96,111),fa_center,45);
+    }
+    var _own_status=_pending ? "正在同步选卡…" : (_ready ? "已准备 / 取消准备后可调整卡组" : "点击卡牌加入，再点击即可移除");
+    if (!_pending && !_ready && coop_get(_own,"cached",false)) _own_status="已带入上次卡组，请确认准备";
+    coop_ui_text(1266,605,_own_status,0.74,_ready ? c_aqua : make_colour_rgb(168,204,209),fa_left,570);
+    draw_set_colour(make_colour_rgb(45,75,84)); draw_line(1266,642,1840,642);
+    coop_ui_text(1266,674,coop_get(_mate,"name","等待队友"),0.95,c_white,fa_left,370);
+    coop_ui_text(1840,674,_other_ready ? "已准备" : "选卡中",0.8,_other_ready ? c_aqua : c_yellow,fa_right,180);
+    for (var _i=0;_i<array_length(_other_deck);_i++) {
+        var _card=coop_loadout_card(_cards,_other_deck[_i]),_x=1266+(_i mod _cols)*_cw,_y=710+(_i div _cols)*56;
+        draw_set_colour(make_colour_rgb(12,34,44)); draw_set_alpha(1); draw_roundrect_ext(_x,_y,_x+_cw-6,_y+49,7,7,false);
+        if (is_struct(_card)) coop_ui_sprite(_card.sprite,0,_x+(_cw-6)/2,_y+25,_cw-18,42);
+    }
+    if (array_length(_other_deck)==0) coop_ui_text(1550,790,"队友正在挑选自己的卡牌",0.85,make_colour_rgb(132,173,184),fa_center,550);
+    coop_ui_text(1266,908,"队友已选 "+string(array_length(_other_deck))+" 张 / 两人可以选择相同卡牌",0.71,make_colour_rgb(159,190,199),fa_left,575);
+    coop_ui_button(48,978,220,65,"退出合作");
+    if (_c.role=="host") coop_ui_button(290,978,230,65,"更换关卡",!_pending);
+    var _label=_pending ? "正在同步…" : (_ready ? "取消准备" : "准备完成");
+    coop_ui_button(1340,978,530,65,_label,!_pending && _c.connected && (_ready || _c.all_connected()) && array_length(_draft)>0);
+    var _status=(_ready && _other_ready) ? "两人已准备，正在进入战场…" : _c.status;
+    if (_ui.notice_until>current_time) _status=_ui.notice;
+    coop_ui_text(550,1010,_status,0.72,make_colour_rgb(169,211,210),fa_left,750);
+    draw_set_alpha(1); draw_set_halign(fa_left); draw_set_valign(fa_top); draw_set_colour(c_white);
+}
+/// Session restores the persisted level context before calling this on a
+/// confirmed match_started. UI drafts alone must never start or build a battle.
+function coop_loadout_launch_host() {
+    var _c=global.coop;
+    if (!_c.active || _c.role!="host" || !coop_get(_c,"loadout_host_level_ready",false)) return false;
+    var _deck=coop_get(coop_get(coop_get(_c,"match_config",{}),"loadouts",{}),_c.player_id,[]);
+    if (!is_array(_deck) || array_length(_deck)<1 || array_length(_deck)>deck_slot_max()) return false;
+    var _shapes=[];
+    for (var _i=0;_i<array_length(_deck);_i++) {
+        var _info=get_card_info_simple(_deck[_i]);
+        if (!is_struct(_info) || deck_get_card_data(_deck[_i],_info.shape)==noone) return false;
+        array_push(_shapes,_info.shape);
+    }
+    deck_empty_slot_ensure();
+    for (var _i=0;_i<ds_list_size(global.selected_deck);_i++) {
+        var _old=global.selected_deck[| _i];
+        if (_old!=global.deck_empty_slot && ds_exists(_old,ds_type_map)) ds_map_destroy(_old);
+    }
+    clear_deck();
+    for (var _i=0;_i<array_length(_deck);_i++) if (!add_to_deck(_deck[_i],_shapes[_i],_i)) return false;
+    audio_stop_sound(mus_readyroom);
+    texture_prefetch("bullet"); texture_prefetch("effects");
+    global.gui_stack.to(room_battle);
+    return true;
 }
 function coop_ui_step() {
     var _c=global.coop;
@@ -33,6 +224,7 @@ function coop_ui_step() {
         coop_guest_step();
         return;
     }
+    if (_c.active && is_struct(coop_get(_c,"preparation"))) { coop_loadout_step(); return; }
     if (!_c.active) {
         if (coop_ui_hit(320,400,560,84)) _c.create();
         if (coop_ui_hit(1040,400,560,84)) _c.resume();
@@ -59,7 +251,7 @@ function coop_ui_draw() {
     var _c=global.coop;
     if (room == room_menu) {
         coop_ui_button(770,990,380,65,_c.active ? "合作房间 / 已连接" : "双人异地合作");
-        if (_c.active) coop_ui_text(960,968,"共同进度 / 两人共享卡组与奖励",0.65,c_white,fa_center,800);
+        if (_c.active) coop_ui_text(960,968,"共同进度 / 各自选卡 / 一起闯关",0.65,c_white,fa_center,800);
     }
     if (room == room_battle && _c.active) {
         if (global.game_over) {
@@ -77,6 +269,7 @@ function coop_ui_draw() {
     if (_c.active && _c.role == "guest" && is_struct(_c.latest) && _c.battle_started) {
         coop_guest_draw(); return;
     }
+    if (_c.active && is_struct(coop_get(_c,"preparation"))) { coop_loadout_draw(); return; }
     draw_clear(make_colour_rgb(10,24,35));
     draw_set_colour(make_colour_rgb(17,43,55)); draw_roundrect_ext(235,245,1685,890,30,30,false);
     coop_ui_text(960,130,"一起守住这桌美食",2.6,make_colour_rgb(250,206,111),fa_center,1600);
@@ -102,11 +295,11 @@ function coop_ui_draw() {
         }
         if (_c.role == "host") {
             coop_ui_button(450,620,450,80,array_length(_c.players)<2 ? "复制邀请码" : "复制重连码");
-            coop_ui_button(1020,620,450,80,"选择关卡与卡组",_c.all_connected());
-            coop_ui_text(960,750,"房主选择关卡和卡组，两人各放置一个角色，共同布阵。",0.9,c_white,fa_center,1350);
+            coop_ui_button(1020,620,450,80,"选择关卡",_c.all_connected());
+            coop_ui_text(960,750,"房主选关，两人分别选卡并准备，再一起进入战场。",0.9,c_white,fa_center,1350);
         } else {
-            coop_ui_text(960,680,"等待房主选择关卡和卡组…",1.3,c_white,fa_center,1400);
-            coop_ui_text(960,750,"进入战场后，点击网格放置你的角色。",0.9,c_white,fa_center,1350);
+            coop_ui_text(960,680,"等待房主选择关卡…",1.3,c_white,fa_center,1400);
+            coop_ui_text(960,750,"选关后，两人可分别选择自己的出战卡组。",0.9,c_white,fa_center,1350);
         }
         coop_ui_button(60,950,260,65,"退出合作模式");
     }
@@ -126,7 +319,7 @@ function coop_guest_step() {
         _c.send_input("pause_vote",{paused:coop_pause_vote});
     }
     if (mouse_check_button_pressed(mb_right)) { _c.selected_slot=-1; _c.selected_gem=-1; _c.shovel_selected=false; }
-    var _slots=coop_get(_s,"slots",[]);
+    var _slots=coop_guest_slots(_s,_c.player_id);
     for (var _i=0;_i<array_length(_slots);_i++) {
         var _slot=_slots[_i];
         if ((_i<9 && keyboard_check_pressed(ord("1")+_i)) || coop_ui_hit(_slot.x-45,_slot.y-55,90,120)) {
@@ -207,8 +400,9 @@ function coop_guest_draw() {
     }
     draw_set_alpha(0.95); draw_set_colour(make_colour_rgb(15,38,47)); draw_roundrect(350,15,1900,178,false);
     coop_ui_sprite(spr_flame,0,390,80,55,60);
-    coop_ui_text(395,142,coop_get(_s,"flame",0),0.9,c_white,fa_center,120);
-    var _slots=coop_get(_s,"slots",[]);
+    var _balances=coop_get(_s,"balances",{});
+    coop_ui_text(395,142,coop_guest_flame(_s,_c.player_id),0.9,c_white,fa_center,120);
+    var _slots=coop_guest_slots(_s,_c.player_id);
     for (var _i=0;_i<array_length(_slots);_i++) {
         var _slot=_slots[_i],_x=_slot.x,_y=_slot.y;
         draw_set_colour(_c.selected_slot==_i ? make_colour_rgb(225,186,88) : make_colour_rgb(65,102,106));
@@ -221,6 +415,14 @@ function coop_guest_draw() {
             coop_ui_text(_x,_y,string(ceil(_cd/60)),0.9,c_white,fa_center,70);
         }
         coop_ui_text(_x-32,_y-44,string(_i+1),0.5,c_white);
+    }
+    coop_ui_text(25,137,"你的火苗独立使用",0.64,make_colour_rgb(154,208,205),fa_left,240);
+    var _team_players=coop_get(_s,"players",[]);
+    for (var _i=0;_i<array_length(_team_players);_i++) {
+        var _team_id=_team_players[_i].player_id;
+        if (_team_id!=_c.player_id && variable_struct_exists(_balances,_team_id)) {
+            coop_ui_text(25,178,"队友火苗 "+string(variable_struct_get(_balances,_team_id)),0.65,make_colour_rgb(151,189,197),fa_left,250);
+        }
     }
     coop_ui_button(25,30,220,75,_c.shovel_selected ? "铲子 / 已选择" : "铲子");
     var _gems=coop_get(_s,"gems",[]);

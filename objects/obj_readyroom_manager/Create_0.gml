@@ -1,3 +1,17 @@
+// The level button finishes assigning level globals after requesting this room.
+// Keep only cleanup-safe UI state here and hand off in Step. In particular, the
+// single-player picker must not erase a cached co-op deck or create start buttons.
+coop_prepare_redirect = coop_is_active() && global.coop.role == "host";
+coop_prepare_retry_at = 0;
+if (coop_prepare_redirect) {
+	global.menu_screen = false;
+	readyroom_music = mus_readyroom;
+	select_card_index = ds_list_create();
+	slot_surface = -1; map_surface = -1;
+	hover_card_index = -1; hover_slot_index = -1; y_offset = 0;
+	is_submenu_open = true;
+	exit;
+}
 // 强制清除application_surface，避免上一房间图像残留
 surface_set_target(application_surface);
 draw_clear_alpha(c_black, 0); // 用透明黑色清除surface，alpha值0表示完全透明

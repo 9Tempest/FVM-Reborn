@@ -1,3 +1,10 @@
+if (coop_prepare_redirect) {
+	draw_clear(make_colour_rgb(10,24,35));
+	coop_ui_text(960,440,"正在准备合作选卡",1.8,c_white,fa_center,1500);
+	coop_ui_text(960,530,global.coop.status,0.9,make_colour_rgb(160,217,209),fa_center,1600);
+	coop_ui_button(760,640,400,75,"回到合作房间");
+	exit;
+}
 draw_set_color(c_white)
 draw_set_halign(fa_center)
 draw_set_valign(fa_middle)
