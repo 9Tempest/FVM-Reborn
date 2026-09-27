@@ -1,4 +1,12 @@
 // Real native VM clients exercising the real Python server; no game saves used.
+function server_test_profile(_coins,_name) {
+    return {coins:_coins,level:1,name:_name,unlocked_items:{max_slot:2},
+        unlocked_cards:[{id:"small_fire",shape:0,level:0},{id:"toast_bread",shape:0,level:0}]};
+}
+function server_test_loadout(_peer,_id,_deck,_ready,_state) {
+    var _prep=_state.preparation;
+    server_test_request(_peer,"set_loadout",_id,{preparation_id:_prep.id,revision:_prep.revision,deck:_deck,ready:_ready});
+}
 function server_test_expect(_name, _passed) {
     array_push(global.server_tests, {name:_name, passed:_passed});
     show_debug_message((_passed ? "PASS " : "FAIL ") + _name);
@@ -33,8 +41,8 @@ function server_test_maybe_result() {
     if (global.server_snapshot_ack && global.server_guest_snapshot && global.server_guest_forbidden && !global.server_result_sent) {
         global.server_result_sent = true;
         var _profiles = {};
-        variable_struct_set(_profiles, global.server_host_id, {coins:150,level:2,name:"原生主机"});
-        variable_struct_set(_profiles, global.server_guest_id, {coins:150,level:2,name:"原生客人"});
+        variable_struct_set(_profiles, global.server_host_id, server_test_profile(150,"原生主机"));
+        variable_struct_set(_profiles, global.server_guest_id, server_test_profile(150,"原生客人"));
         global.server_result_packet = {match_id:global.server_match_id,result:{outcome:"victory",reward:{coins:50}},profiles:_profiles};
         server_test_request(global.transport, "match_result", "result-1", global.server_result_packet);
     }
@@ -70,7 +78,10 @@ function server_test_event(_role, _event) {
     // Deliberately don't print tokens, invitations, or complete packets.
     show_debug_message("SERVER_PACKET role=" + _role + " type=" + _message.type + " request=" + _request_id);
     if (_message.type == "error") {
-        if (_request_id == "input-gap") {
+        if (_request_id == "start-unready") {
+            server_test_expect("native host cannot skip both ready confirmations",_message.code=="players_not_ready");
+            server_test_loadout(global.transport,"host-deck",["small_fire"],false,global.server_prepared_state);
+        } else if (_request_id == "input-gap") {
             server_test_expect("server rejects sequence gaps", _message.code == "sequence_gap");
             global.server_inputs_checked = true;
             server_test_maybe_snapshot();
@@ -87,7 +98,7 @@ function server_test_event(_role, _event) {
     switch (_request_id) {
         case "host-auth":
             server_test_expect("native host authenticates with disposable credential", _message.type == "host_authenticated");
-            server_test_request(global.transport, "create_room", "host-create", {profile:{coins:100,level:1,name:"原生测试存档",cards:["toast_bread"]},name:"原生合作测试",player_name:"原生主机"});
+            server_test_request(global.transport, "create_room", "host-create", {profile:server_test_profile(100,"原生测试存档"),name:"原生合作测试",player_name:"原生主机"});
             break;
         case "host-create":
             server_test_expect("native host creates a two-player room", _message.type == "room_created" && _message.role == "host");
@@ -101,11 +112,39 @@ function server_test_event(_role, _event) {
             server_test_expect("native guest joins with the one-use invitation", _message.type == "room_joined" && _message.role == "guest" && array_length(_message.state.players) == 2);
             global.server_guest_id = _message.player_id;
             global.server_guest_resume = _message.resume_token;
-            server_test_request(global.transport, "start_match", "match-start", {level_id:"cocoa_island_daytime",config:{shared_campaign:true}});
+            server_test_request(global.transport,"prepare_match","prepare",{level_id:"cocoa_island_daytime",level_name:"可可岛测试",slot_limit:2});
+            break;
+        case "prepare":
+            global.server_prepared_state=_message.state;
+            server_test_expect("native clients negotiate personal-loadout preparation",_message.type=="loadout_state" && _message.state.features.personal_loadouts && _message.state.preparation.slot_limit==2);
+            var _prep=_message.state.preparation;
+            server_test_request(global.transport,"start_match","start-unready",{preparation_id:_prep.id,revision:_prep.revision,level_id:_prep.level_id,config:{}});
+            break;
+        case "host-deck":
+            server_test_expect("host draft is acknowledged without readiness",!variable_struct_get(_message.state.preparation.selections,global.server_host_id).ready);
+            server_test_loadout(global.server_guest,"guest-deck",["toast_bread"],false,_message.state);
+            break;
+        case "guest-deck":
+            server_test_expect("guest independently selects another shared-library card",variable_struct_get(_message.state.preparation.selections,global.server_guest_id).deck[0]=="toast_bread");
+            server_test_loadout(global.transport,"host-ready",["small_fire"],true,_message.state);
+            break;
+        case "host-ready":
+            server_test_loadout(global.server_guest,"guest-ready",["toast_bread"],true,_message.state);
+            break;
+        case "guest-ready":
+            var _prep=_message.state.preparation;
+            server_test_expect("both native players confirm the same latest preparation",variable_struct_get(_prep.selections,global.server_host_id).ready && variable_struct_get(_prep.selections,global.server_guest_id).ready);
+            global.server_start_packet={preparation_id:_prep.id,revision:_prep.revision,level_id:_prep.level_id,config:{shared_campaign:true}};
+            server_test_request(global.transport,"start_match","match-start",global.server_start_packet);
             break;
         case "match-start":
-            server_test_expect("host starts authoritative match", _message.type == "match_started" && _message.state.room_status == "running");
-            global.server_match_id = _message.match_id;
+            if(!_message.duplicate) {
+                global.server_match_id = _message.match_id;
+                server_test_expect("host starts authoritative match", _message.type == "match_started" && _message.state.room_status == "running");
+                var _config=_message.state.config;
+                server_test_expect("server freezes distinct player decks and sixty-percent flame",_config.per_player_loadouts && _config.flame_ratio==0.6 && variable_struct_get(_config.loadouts,global.server_host_id)[0]=="small_fire" && variable_struct_get(_config.loadouts,global.server_guest_id)[0]=="toast_bread");
+                server_test_request(global.transport,"start_match","match-start",global.server_start_packet);
+            } else server_test_expect("retrying the exact prepared start returns one match",_message.match_id==global.server_match_id && _message.type=="match_started");
             break;
         case "input-1":
             server_test_expect("native floating-point sequence accepted as integer", _message.type == "input_ack" && _message.seq == 1 && !_message.duplicate);

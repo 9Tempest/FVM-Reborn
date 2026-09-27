@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise actual CoopSession recovery, durable outboxes, and real native networking.
+"""Exercise actual CoopSession preparation, recovery, durable outboxes and networking.
 
 Run with a macOS Python venv containing server/requirements.txt. Save/UI/battle
 stubs and a disk-failure seam exist only in the isolated temporary project.

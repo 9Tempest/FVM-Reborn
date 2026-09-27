@@ -97,7 +97,14 @@ def main(session=False):
         server.wait(timeout=8)
         server = None
         with sqlite3.connect(data / "coop.sqlite3") as db:
+            match_configs = [json.loads(row[0]) for row in db.execute("SELECT config_json FROM matches")]
             sql_checks = [
+                ("prepared start creates exactly one SQLite match", len(match_configs) == 1),
+                ("SQLite match freezes independent player decks", len(match_configs) == 1
+                 and match_configs[0].get("per_player_loadouts") is True
+                 and match_configs[0].get("flame_ratio") == 0.6
+                 and sorted(match_configs[0].get("loadouts", {}).values()) == [["small_fire"], ["toast_bread"]]),
+                ("both selected decks are cached durably", db.execute("SELECT COUNT(*) FROM loadout_cache").fetchone()[0] == 2),
                 ("SQLite integrity remains intact", db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"),
                 ("exactly one input is stored after retry", db.execute("SELECT COUNT(*) FROM commands").fetchone()[0] == 1),
                 ("exactly one result is stored after retry", db.execute("SELECT COUNT(*) FROM match_results").fetchone()[0] == 1),
