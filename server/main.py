@@ -2,7 +2,7 @@
 """Loopback-only, two-player FVM co-op service. No game simulation runs here."""
 import argparse
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 from http import HTTPStatus
 import json
@@ -20,7 +20,7 @@ from websockets.exceptions import ConnectionClosed
 from protocol import (MAX_COMMANDS, MAX_MESSAGE, MAX_PROFILE, MAX_STATE, VERSION,
                       MAX_DECK, ProtocolError, campaign_progress, decode, encode,
                       identifier, input_payload, integer, json_object, loadout_deck,
-                      require, string)
+                      require, screen_frame, SCREEN_INTERVAL, string)
 from storage import Store, new_id, new_token, token_hash
 
 LOG = logging.getLogger("fvm.coop")
@@ -36,6 +36,13 @@ class Client:
     role: str | None = None
     allowance: float = 120.0
     rate_updated: float = 0.0
+    send_lock: object = field(default_factory=asyncio.Lock)
+    pending_visual: object = None
+    visual_task: object = None
+    screen_seq: int = 0
+    screen_digest: str = ""
+    screen_next_at: float = 0.0
+    screen_stream: str = field(default_factory=new_id)
 
     def rate_limit(self):
         now = time.monotonic()
@@ -56,12 +63,59 @@ class GameServer:
         self.live_checkpoints = {}
         self.checkpoint_written_at = {}
         self.checkpoint_written_tick = {}
+        self.shared_screens = {}  # Volatile UI frames, never written to SQLite.
         self.store.reset_readiness()
 
     def state(self, client, after=None):
         connected = {player for (room, player) in self.clients if room == client.room_id}
         match_id = self.store.room(client.room_id)["match_id"]
-        return self.store.state(client.room_id, connected, after, self.live_checkpoints.get(match_id))
+        state = self.store.state(client.room_id, connected, after, self.live_checkpoints.get(match_id))
+        state["features"]["shared_screen"] = True
+        state["shared_screen"] = self.shared_screens.get(client.room_id) if self.screen_allowed(client.room_id) else None
+        return state
+
+    def screen_allowed(self, room_id):
+        return self.store.room(room_id)["status"] in ("lobby", "finished") and self.store.preparation(room_id) is None
+
+    def clear_screen(self, room_id):
+        self.shared_screens.pop(room_id, None)
+        for (room, _), client in self.clients.items():
+            if room == room_id and client.pending_visual and client.pending_visual["type"] == "screen_frame":
+                client.pending_visual = None
+
+    async def send_message(self, client, message):
+        # All sends share one lock so the final battle frame and later reliable
+        # state transitions cannot be overtaken by a queued older visual frame.
+        if message.get("type") in ("loadout_state", "match_started", "snapshot"):
+            client.pending_visual = None
+        async with client.send_lock:
+            await asyncio.wait_for(client.socket.send(encode({"v": VERSION, **message})), 3)
+
+    async def send_latest_visual(self, client):
+        try:
+            while client.pending_visual is not None:
+                async with client.send_lock:
+                    message, client.pending_visual = client.pending_visual, None
+                    if message is None:
+                        continue
+                    if message["type"] == "screen_frame" and not self.screen_allowed(client.room_id):
+                        continue
+                    if message["type"] == "snapshot" and self.store.room(client.room_id)["match_id"] != message["match_id"]:
+                        continue
+                    await asyncio.wait_for(client.socket.send(encode({"v": VERSION, **message})), 3)
+        except asyncio.TimeoutError:
+            await client.socket.close(1013, "Client is not receiving game updates")
+        except ConnectionClosed:
+            pass
+        finally:
+            client.visual_task = None
+
+    def queue_visual(self, client, message):
+        # One frame in flight + one replaceable pending frame; never accumulate
+        # an unbounded FIFO of outdated screenshots or battle snapshots.
+        client.pending_visual = message
+        if client.visual_task is None:
+            client.visual_task = asyncio.create_task(self.send_latest_visual(client))
 
     def persisted_profiles(self, room_id):
         return {m["player_id"]: {"profile": json.loads(m["profile_json"]), "revision": m["revision"]}
@@ -94,12 +148,17 @@ class GameServer:
             await previous.socket.close(4001, "Session resumed on another connection")
 
     async def broadcast(self, room_id, message, role=None, exclude=None):
-        payload = encode({"v": VERSION, **message})
         targets = [c for (room, _), c in self.clients.items()
                    if room == room_id and c is not exclude and (role is None or c.role == role)]
+        ephemeral = message["type"] == "screen_frame" or (
+            message["type"] == "snapshot" and not message["state"].get("game_over", False))
+        if ephemeral:
+            for client in targets:
+                self.queue_visual(client, message)
+            return
         async def send(client):
             try:
-                await asyncio.wait_for(client.socket.send(payload), 3)
+                await self.send_message(client, message)
             except asyncio.TimeoutError:
                 await client.socket.close(1013, "Client is not receiving game updates")
         if targets:
@@ -249,6 +308,8 @@ class GameServer:
                     response = {"type": "match_started", "match_id": match_id, "duplicate": False}
             db.execute("INSERT INTO preparation_requests VALUES (?,?,?,?,?)",
                        (client.room_id,client.player_id,request["request_id"],digest,encode(response)))
+        if kind in ("prepare_match", "start_match"):
+            self.clear_screen(client.room_id)
         response["state"] = self.state(client)
         return response, [(response, None, client)]
 
@@ -278,6 +339,30 @@ class GameServer:
             return {"type": "pong", "server_time": time.time()}, []
         if kind == "leave":
             return {"type": "left"}, []
+        if kind == "screen_frame":
+            self.require_host(client)
+            require(self.screen_allowed(client.room_id), "screen_unavailable", "Screen sharing is paused for card selection or battle")
+            seq = integer(request.get("seq"), "seq", 1)
+            reply = {"type": "screen_frame_ack", "seq": seq, "accepted": False, "duplicate": False}
+            if seq < client.screen_seq:
+                return {**reply, "dropped": "out_of_order"}, []
+            if seq > client.screen_seq and time.monotonic() < client.screen_next_at:
+                return {**reply, "dropped": "rate_limited"}, []
+            frame = screen_frame(request)
+            digest = hashlib.sha256(encode(frame).encode()).hexdigest()
+            if seq == client.screen_seq:
+                require(digest == client.screen_digest, "screen_conflict", "Screen sequence was reused with different data")
+                return {**reply, "accepted": True, "duplicate": True}, []
+            frame["stream_id"] = client.screen_stream
+            client.screen_seq, client.screen_digest = seq, digest
+            client.screen_next_at = time.monotonic() + SCREEN_INTERVAL
+            # Keep at most 32 recent room images (about 22 MiB encoded), including
+            # disconnected rooms. Cache eviction never touches durable progress.
+            self.shared_screens.pop(client.room_id, None)
+            if len(self.shared_screens) >= 32:
+                self.shared_screens.pop(next(iter(self.shared_screens)))
+            self.shared_screens[client.room_id] = frame
+            return {**reply, "accepted": True}, [({"type": "screen_frame", **frame}, "guest", None)]
         if kind in ("prepare_match", "set_loadout", "cancel_preparation", "start_match"):
             return self.loadout_request(client, request)
         if kind in ("new_invite", "refresh_invite"):
@@ -418,7 +503,13 @@ class GameServer:
                     client.rate_limit()
                     request = decode(raw)
                     response, events = await self.dispatch(client, request)
-                    await socket.send(encode({"v": VERSION, "request_id": request["request_id"], **response}))
+                    # A slow input sender's ACK must not hold up forwarding the
+                    # already committed command to the authoritative simulation.
+                    if request["type"] == "input":
+                        for event, role, exclude in events:
+                            await self.broadcast(client.room_id, event, role, exclude)
+                        events = []
+                    await self.send_message(client, {"request_id": request["request_id"], **response})
                     for event, role, exclude in events:
                         await self.broadcast(client.room_id, event, role, exclude)
                     if request["type"] == "leave":
@@ -429,7 +520,7 @@ class GameServer:
                     if request: reply["request_id"] = request["request_id"]
                     if error.code in ("preparation_conflict", "stale_preparation") and client.room_id:
                         reply["state"] = self.state(client)
-                    await socket.send(encode(reply))
+                    await self.send_message(client, reply)
                     if not client.authenticated or error.code in ("rate_limited", "session_replaced"):
                         await socket.close(1008, "Protocol or authentication policy")
                         break
@@ -440,13 +531,17 @@ class GameServer:
                     LOG.exception("Storage operation failed")
                     reply = {"v": VERSION, "type": "error", "code": "storage_error", "message": "Could not commit game data; retry the same request"}
                     if request: reply["request_id"] = request["request_id"]
-                    await socket.send(encode(reply))
+                    await self.send_message(client, reply)
         except ConnectionClosed:
             pass
         except Exception:
             LOG.exception("Connection failed")
             await socket.close(1011, "Server error")
         finally:
+            client.pending_visual = None
+            if client.visual_task is not None:
+                client.visual_task.cancel()
+                await asyncio.gather(client.visual_task, return_exceptions=True)
             self.connections.discard(socket)
             key = (client.room_id, client.player_id)
             if self.clients.get(key) is client:

@@ -1,17 +1,41 @@
 """End-to-end tests use real loopback WebSockets and a disposable SQLite directory."""
 import asyncio
+import base64
 import contextlib
 import json
 from pathlib import Path
 import sqlite3
 import stat
+import struct
 import sys
 import tempfile
 import unittest
 import uuid
+import zlib
 
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
+from websockets.asyncio.server import serve
+
+from main import GameServer
+from storage import Store
+
+
+# Real 2x2 JPEG generated with macOS ImageIO/sips; no test-time imaging dependency.
+JPEG_SCREEN = "/9j/4AAQSkZJRgABAQAASABIAAD/4QBMRXhpZgAATU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAAqADAAQAAAABAAAAAgAAAAD/7QA4UGhvdG9zaG9wIDMuMAA4QklNBAQAAAAAAAA4QklNBCUAAAAAABDUHYzZjwCyBOmACZjs+EJ+/8AAEQgAAgACAwEiAAIRAQMRAf/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/bAEMAAgICAgICAwICAwUDAwMFBgUFBQUGCAYGBgYGCAoICAgICAgKCgoKCgoKCgwMDAwMDA4ODg4ODw8PDw8PDw8PD//bAEMBAgICBAQEBwQEBxALCQsQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEP/dAAQAAf/aAAwDAQACEQMRAD8Az6KKK/z7P9dD/9k="
+
+
+def png_screen(width=2, height=2):
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind+body) & 0xffffffff)
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+    png += chunk(b"IDAT", zlib.compress((b"\0" + b"\xff\x50\x0a" * width) * height)) + chunk(b"IEND", b"")
+    return base64.b64encode(png).decode()
+
+
+def screen_fields(seq=1, **changes):
+    return {"seq": seq, "room": "room_menu", "title": "共同合成屋", "width": 2,
+            "height": 2, "encoding": "png", "image": png_screen(), **changes}
 
 
 def profile(**changes):
@@ -563,6 +587,174 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(old["state"]["preparation"])
         await guest.rpc("resume", room_id=created["room_id"], resume_token=joined["resume_token"])
         self.assertEqual((await self.start_match(host, guest))["type"], "match_started")
+
+    async def test_screen_frame_authorization_validation_and_memory_only_recovery(self):
+        host, guest, created, joined = await self.room()
+        self.assertEqual((await guest.rpc("screen_frame", **screen_fields()))["code"], "forbidden")
+        state = (await guest.rpc("get_state"))["state"]
+        self.assertTrue(state["features"]["shared_screen"])
+        self.assertIsNone(state["shared_screen"])
+        for change in ({"room": "room_coop"}, {"room": "room_battle"}, {"room": "room_init"},
+                       {"room": "room_ready"}, {"width": 961}, {"height": 541},
+                       {"width": True}, {"width": 3}, {"image": "bad%%%"},
+                       {"image": "a" * (700 * 1024 + 1)}, {"encoding": "gif"},
+                       {"image": base64.b64encode(b"\x89PNG\r\n\x1a\nbroken").decode()},
+                       {"image": JPEG_SCREEN, "encoding": "png"}):
+            response = await host.rpc("screen_frame", **screen_fields(**change))
+            self.assertEqual(response["type"], "error", change)
+        rows_before = self.query("SELECT revision,profile_json FROM profiles ORDER BY player_id")
+        accepted = await host.rpc("screen_frame", **screen_fields())
+        self.assertTrue(accepted["accepted"])
+        frame = await guest.event("screen_frame")
+        self.assertEqual(frame["image"], png_screen())
+        self.assertEqual(frame["title"], "共同合成屋")
+        self.assertTrue(frame["stream_id"])
+        self.assertTrue((await host.rpc("screen_frame", **screen_fields()))["duplicate"])
+        self.assertEqual((await host.rpc("screen_frame", **screen_fields(title="changed")))["code"], "screen_conflict")
+        self.assertEqual((await host.rpc("screen_frame", **screen_fields(2)))["dropped"], "rate_limited")
+        await asyncio.sleep(0.26)
+        jpeg = await host.rpc("screen_frame", **screen_fields(3, image=JPEG_SCREEN, encoding="jpeg"))
+        self.assertTrue(jpeg["accepted"])
+        self.assertEqual((await guest.event("screen_frame"))["encoding"], "jpeg")
+        self.assertEqual((await host.rpc("screen_frame", **screen_fields(2)))["dropped"], "out_of_order")
+        self.assertEqual(self.query("SELECT revision,profile_json FROM profiles ORDER BY player_id"), rows_before)
+        await guest.socket.close()
+        await host.event("player_disconnected")
+        guest = await self.peer()
+        resumed = await guest.rpc("resume", room_id=created["room_id"], resume_token=joined["resume_token"])
+        self.assertEqual(resumed["state"]["shared_screen"]["seq"], 3)
+        self.assertEqual(resumed["state"]["shared_screen"]["image"], JPEG_SCREEN)
+        await self.stop(abrupt=True)
+        await self.start()
+        host = await self.peer()
+        restarted = await host.rpc("resume", room_id=created["room_id"], resume_token=created["resume_token"])
+        self.assertIsNone(restarted["state"]["shared_screen"])
+        self.assertTrue((await host.rpc("screen_frame", **screen_fields()))["accepted"])
+        self.assertNotEqual((await host.rpc("get_state"))["state"]["shared_screen"]["stream_id"], frame["stream_id"])
+
+    async def test_screen_frame_cannot_cover_loadouts_or_battle(self):
+        host, guest, created, joined = await self.room()
+        await host.rpc("screen_frame", **screen_fields())
+        await guest.event("screen_frame")
+        preparation = await self.prepare(host)
+        state = (await guest.rpc("get_state"))["state"]
+        self.assertIsNone(state["shared_screen"])
+        self.assertIsNotNone(state["preparation"])
+        self.assertEqual((await host.rpc("screen_frame", **screen_fields(2)))["code"], "screen_unavailable")
+        await host.rpc("cancel_preparation", preparation_id=preparation["id"], revision=preparation["revision"])
+        self.assertIsNone((await guest.rpc("get_state"))["state"]["shared_screen"])
+        started = await self.start_match(host, guest)
+        self.assertEqual((await host.rpc("screen_frame", **screen_fields(2)))["code"], "screen_unavailable")
+        profiles = {created["player_id"]: profile(), joined["player_id"]: profile()}
+        await host.rpc("match_result", match_id=started["match_id"], result={"outcome": "victory"}, profiles=profiles)
+        await asyncio.sleep(0.26)
+        self.assertTrue((await host.rpc("screen_frame", **screen_fields(2)))["accepted"])
+        self.assertEqual((await guest.event("screen_frame"))["seq"], 2)
+
+
+class Streaming(unittest.IsolatedAsyncioTestCase):
+    """Real WebSockets with a controlled slow write, avoiding flaky TCP thresholds."""
+    peer, room = EndToEnd.peer, EndToEnd.room
+    prepare, select, ready, start_match = EndToEnd.prepare, EndToEnd.select, EndToEnd.ready, EndToEnd.start_match
+
+    async def asyncSetUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="fvm-stream-tests-")
+        self.store = Store(self.temp.name)
+        self.app = GameServer(self.store)
+        self.server = await serve(self.app.handler, "127.0.0.1", 0, compression=None, ping_interval=None)
+        self.url = f"ws://127.0.0.1:{self.server.sockets[0].getsockname()[1]}/game"
+        self.token, self.peers = self.store.host_token, []
+
+    async def asyncTearDown(self):
+        for peer in self.peers:
+            await peer.socket.close()
+        self.server.close()
+        await self.server.wait_closed()
+        self.store.close()
+        self.temp.cleanup()
+
+    async def test_latest_screen_overwrites_backlog_without_blocking_host(self):
+        host, guest, created, joined = await self.room()
+        connection = self.app.clients[(created["room_id"], joined["player_id"])]
+        original = connection.socket.send
+        blocked, release = asyncio.Event(), asyncio.Event()
+        async def slow_send(payload):
+            if json.loads(payload)["type"] == "screen_frame":
+                blocked.set()
+                await release.wait()
+            await original(payload)
+        connection.socket.send = slow_send
+        try:
+            self.assertTrue((await host.rpc("screen_frame", **screen_fields()))["accepted"])
+            await asyncio.wait_for(blocked.wait(), 1)
+            for seq in (2, 3):
+                await asyncio.sleep(0.26)
+                self.assertTrue((await host.rpc("screen_frame", **screen_fields(seq)))["accepted"])
+            self.assertEqual(connection.pending_visual["seq"], 3)
+            self.assertEqual((await host.rpc("ping"))["type"], "pong")
+            release.set()
+            self.assertEqual((await guest.event("screen_frame"))["seq"], 1)
+            self.assertEqual((await guest.event("screen_frame"))["seq"], 3)
+            self.assertIsNone(connection.pending_visual)
+        finally:
+            release.set()
+
+    async def test_committed_input_reaches_host_before_slow_sender_ack(self):
+        host, guest, created, joined = await self.room()
+        match = await self.start_match(host, guest)
+        connection = self.app.clients[(created["room_id"], joined["player_id"])]
+        original = connection.socket.send
+        blocked, release = asyncio.Event(), asyncio.Event()
+        async def slow_ack(payload):
+            if json.loads(payload)["type"] == "input_ack":
+                blocked.set()
+                await release.wait()
+            await original(payload)
+        connection.socket.send = slow_ack
+        task = asyncio.create_task(guest.rpc("input", match_id=match["match_id"], seq=1,
+                                             action="shovel", payload={"row": 1, "col": 1}))
+        try:
+            command = await asyncio.wait_for(host.event("command"), 1)
+            await asyncio.wait_for(blocked.wait(), 1)
+            self.assertFalse(task.done())
+            self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM commands").fetchone()[0], 1)
+            release.set()
+            self.assertEqual((await task)["command_id"], command["command_id"])
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def test_final_snapshot_follows_latest_visual_before_result(self):
+        host, guest, created, joined = await self.room()
+        match = await self.start_match(host, guest)
+        connection = self.app.clients[(created["room_id"], joined["player_id"])]
+        original = connection.socket.send
+        blocked, release = asyncio.Event(), asyncio.Event()
+        async def slow_snapshot(payload):
+            message = json.loads(payload)
+            if message["type"] == "snapshot" and message["tick"] == 1:
+                blocked.set()
+                await release.wait()
+            await original(payload)
+        connection.socket.send = slow_snapshot
+        try:
+            fields = dict(match_id=match["match_id"], applied_command_id=0)
+            await host.rpc("snapshot", tick=1, state={"game_over": False}, **fields)
+            await asyncio.wait_for(blocked.wait(), 1)
+            await host.rpc("snapshot", tick=2, state={"game_over": False}, **fields)
+            await host.rpc("snapshot", tick=3, state={"game_over": False}, **fields)
+            self.assertEqual(connection.pending_visual["tick"], 3)
+            # The final frame is reliable and clears the queued outdated one.
+            await host.rpc("snapshot", tick=4, state={"game_over": True}, **fields)
+            await asyncio.sleep(0)
+            release.set()
+            self.assertEqual((await guest.event("snapshot"))["tick"], 1)
+            self.assertEqual((await guest.event("snapshot"))["tick"], 4)
+            profiles = {created["player_id"]: profile(), joined["player_id"]: profile()}
+            await host.rpc("match_result", match_id=match["match_id"], result={"outcome": "victory"}, profiles=profiles)
+            self.assertEqual((await guest.event("match_finished"))["result"]["outcome"], "victory")
+        finally:
+            release.set()
 
 
 if __name__ == "__main__":

@@ -1,7 +1,11 @@
 """Version-one wire validation. The server never executes client-supplied code."""
+import base64
+import binascii
 import json
 import math
 import re
+import struct
+import zlib
 
 VERSION = 1
 MAX_MESSAGE = 1024 * 1024
@@ -10,6 +14,9 @@ MAX_STATE = 768 * 1024
 MAX_COMMANDS = 100000
 MAX_SEQ = 2147483647
 MAX_DECK = 31
+MAX_SCREEN_BASE64 = 700 * 1024
+SCREEN_INTERVAL = 0.25
+SCREEN_ROOMS = frozenset(("room_menu", "room_map", "room_tower_cake", "room_laboratory"))
 ID = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 
 
@@ -73,6 +80,89 @@ def loadout_deck(deck, allowed, limit, ready=False):
     require(len(set(deck)) == len(deck), "invalid_loadout", "A deck cannot contain duplicate cards")
     require(not ready or len(deck) > 0, "invalid_loadout", "Choose at least one card before confirming")
     return list(deck)
+
+
+def screen_dimensions(data, encoding):
+    """Bound image dimensions without decoding image pixels in the server loop."""
+    def valid(condition):
+        require(condition, "invalid_screen", "Invalid screen image header")
+    if encoding == "png":
+        valid(data.startswith(b"\x89PNG\r\n\x1a\n"))
+        offset, dimensions, image_data = 8, None, False
+        while offset + 12 <= len(data):
+            size = int.from_bytes(data[offset:offset+4], "big")
+            kind = data[offset+4:offset+8]
+            end = offset + size + 12
+            valid(end <= len(data))
+            body = data[offset+8:offset+8+size]
+            valid(zlib.crc32(kind + body) & 0xffffffff == int.from_bytes(data[end-4:end], "big"))
+            if dimensions is None:
+                valid(kind == b"IHDR" and size == 13)
+                width, height, depth, colour, compression, filtering, interlace = struct.unpack(">IIBBBBB", body)
+                valid(depth in (1, 2, 4, 8, 16) and colour in (0, 2, 3, 4, 6)
+                      and compression == filtering == 0 and interlace in (0, 1))
+                dimensions = width, height
+            elif kind == b"IHDR":
+                valid(False)
+            if kind == b"IDAT":
+                image_data = True
+            if kind == b"IEND":
+                valid(size == 0 and image_data and end == len(data))
+                return dimensions
+            offset = end
+        valid(False)
+    # JPEG SOF segment fields follow ITU T.81, as parsed by libjpeg-turbo's
+    # jdmarker.c. Accept the 8-bit baseline/extended/progressive encoders used by
+    # ImageIO; no pixel decode or optional Python imaging dependency is needed.
+    valid(encoding == "jpeg" and data.startswith(b"\xff\xd8") and data.endswith(b"\xff\xd9"))
+    offset, dimensions = 2, None
+    while offset < len(data) - 2:
+        valid(data[offset] == 0xff)
+        while offset < len(data) and data[offset] == 0xff:
+            offset += 1
+        valid(offset < len(data))
+        marker = data[offset]
+        offset += 1
+        valid(marker not in (0, 0xd8, 0xd9))
+        if marker == 0x01 or 0xd0 <= marker <= 0xd7:
+            continue
+        valid(offset + 2 <= len(data))
+        size = int.from_bytes(data[offset:offset+2], "big")
+        valid(size >= 2 and offset + size <= len(data) - 2)
+        body = data[offset+2:offset+size]
+        if marker in (0xc0, 0xc1, 0xc2):
+            valid(dimensions is None and len(body) >= 6 and body[0] == 8)
+            height, width, components = struct.unpack(">HHB", body[1:6])
+            valid(components in (1, 3, 4) and len(body) == 6 + components * 3)
+            dimensions = width, height
+        elif marker == 0xda:
+            valid(dimensions is not None and len(body) >= 4 and len(body) == 4 + body[0] * 2)
+            return dimensions
+        offset += size
+    valid(False)
+
+
+def screen_frame(request):
+    seq = integer(request.get("seq"), "seq", 1)
+    room = identifier(request.get("room"), "room")
+    require(room in SCREEN_ROOMS, "screen_unavailable", "This game screen cannot be shared")
+    width = integer(request.get("width"), "width", 1, 960)
+    height = integer(request.get("height"), "height", 1, 540)
+    encoding = request.get("encoding")
+    require(encoding in ("jpeg", "png"), "invalid_screen", "Use JPEG or PNG screen encoding")
+    image = request.get("image")
+    require(isinstance(image, str) and 1 <= len(image) <= MAX_SCREEN_BASE64,
+            "invalid_screen", "Screen image exceeds its encoded size limit")
+    try:
+        raw = base64.b64decode(image, validate=True)
+    except (ValueError, binascii.Error):
+        raise ProtocolError("invalid_screen", "Screen image is not valid base64") from None
+    require(screen_dimensions(raw, encoding) == (width, height), "invalid_screen", "Screen dimensions do not match its header")
+    title = string(request.get("title", room), "title", 160)
+    result = {"seq": seq, "room": room, "width": width, "height": height,
+              "encoding": encoding, "image": image, "title": title}
+    json_object(result, "screen frame", MAX_MESSAGE)
+    return result
 
 
 def json_object(value, field, maximum):
