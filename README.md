@@ -4,7 +4,7 @@
 
 本 fork 基于 [Spring-SG/FVM-Reborn](https://github.com/Spring-SG/FVM-Reborn) v2.4.1，新增原生 macOS 移植（Apple Silicon / Intel）。使用 Cocoa 原生扩展处理文件、存档备份和地图解压；保留 Windows 构建。构建步骤和验证状态见 [macOS 说明](docs/MACOS.md)。
 
-macOS 已完成原生构建、独立应用打包和实际主菜单/战斗验证。中文显示、鼠标布阵、数字键选卡、60 FPS 战斗与 120 FPS 加速已验证；原生扩展在 arm64 / x86_64 上各通过 20 项测试。运行 `./tools/macos/build.sh package-local` 可构建本机使用的沙盒应用。关键操作即时自动存档与可恢复写入已加入，正在进行独立运行测试；Intel 完整游戏尚未实际验收。
+macOS 已完成原生构建、独立应用打包和实际主菜单/战斗验证。中文显示、鼠标布阵、数字键选卡、60 FPS 战斗与 120 FPS 加速已验证；原生扩展在 arm64 / x86_64 上各通过 20 项测试。运行 `./tools/macos/build.sh package-local` 可构建本机使用的沙盒应用。关键操作即时自动存档与中断恢复通过原生 VM 44 项测试；新版通关界面展示金币、材料、卡面和装备，奖励幂等与动画交互通过 7 项测试。Intel 完整游戏尚未实际验收。
 
 ---
 

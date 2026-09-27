@@ -1,141 +1,151 @@
-// obj_battle_pause_manager - Draw Event
-if (global.is_paused)
-{
-    // 1. 绘制半透明遮罩
-    
-    
-    // 2. 根据状态显示不同内容
-    if (global.show_menu)
-    {
-        // 绘制菜单 (示例：居中菜单框)
-        var menu_x = room_width / 2;
-        var menu_y = room_height / 2;
-        
-        // 菜单背景
-        //draw_set_color(c_white);
-        //draw_rectangle(menu_x - 100, menu_y - 100, menu_x + 100, menu_y + 100, false);
-        
-        // 菜单选项 (示例)
-		//draw_set_color(c_black);
-        //draw_set_halign(fa_center);
-        //draw_text(menu_x, menu_y - 30, "继续游戏");
-        //draw_text(menu_x, menu_y + 10, "退出关卡");
-        // 这里可以添加菜单交互逻辑
-    }
-    else
-    {
-		draw_set_alpha(0.5);
-		draw_rectangle_color(0, 0, room_width, room_height, c_black, c_black, c_black, c_black, false);
-		draw_set_alpha(1);
-        // 只显示"暂停中"文字
-		draw_set_font(font_yuan)
-        draw_set_halign(fa_center);
-        draw_set_valign(fa_middle);
-		draw_set_color(c_white)
-		if obj_battle.battle_time == 1{
-			draw_sprite_ext(spr_place_player_tip,0,room_width / 2, room_height / 2,1.8,1.8,0,c_white,1)
+// Victory is entirely cosmetic: the reward transaction has already committed.
+if (victory_started) {
+	var _gold = make_colour_rgb(250, 206, 111)
+	var _white = make_colour_rgb(247, 242, 229)
+	var _muted = make_colour_rgb(157, 176, 181)
+	var _teal = make_colour_rgb(117, 217, 184)
+	var _intro = victory_reveal(0)
+	draw_set_alpha(0.84 * _intro)
+	draw_set_colour(make_colour_rgb(6, 18, 26))
+	draw_rectangle(0, 0, room_width, room_height, false)
+
+	// A small deterministic burst avoids changing the gameplay random stream.
+	for (var _i = 0; _i < 22; _i++) {
+		var _angle = _i * 137.5
+		var _radius = 115 + ((_i * 43) mod 470) + min(victory_time, 3) * 26
+		var _px = 960 + lengthdir_x(_radius, _angle)
+		var _py = 190 + lengthdir_y(_radius * 0.38, _angle)
+		draw_set_alpha(_intro * max(0.12, 0.6 - victory_time * 0.11))
+		draw_set_colour(_i mod 3 == 0 ? _teal : _gold)
+		draw_circle(_px, _py, 2 + (_i mod 3), false)
+	}
+	var _title_y = 151 - (1 - _intro) * 32
+	victory_text(960, _title_y - 58, first_complete ? "首次通关" : "挑战完成", 0.95, _gold, _intro, fa_center, 500)
+	victory_text(963, _title_y + 4, "冒险胜利", 3.15 + (1 - _intro) * 0.25, c_black, _intro * 0.4, fa_center, 800)
+	victory_text(960, _title_y, "冒险胜利", 3.15 + (1 - _intro) * 0.25, _gold, _intro, fa_center, 800)
+	victory_text(960, 227, global.level_data.name, 1.2, _white, _intro, fa_center, 1000)
+
+	var _panel = victory_reveal(0.15)
+	draw_set_alpha(_panel * 0.4)
+	draw_set_colour(c_black)
+	draw_roundrect_ext(195, 293, 1735, 922, 26, 26, false)
+	draw_set_alpha(_panel)
+	draw_set_colour(make_colour_rgb(17, 34, 44))
+	draw_roundrect_ext(190, 278, 1730, 910, 26, 26, false)
+	draw_set_colour(make_colour_rgb(37, 59, 68))
+	draw_roundrect_ext(190, 278, 1730, 910, 26, 26, true)
+	draw_set_colour(_gold)
+	draw_line_width(230, 279, 530, 279, 3)
+	draw_set_colour(make_colour_rgb(49, 69, 74))
+	draw_line(550, 322, 550, 866)
+
+	victory_text(240, 332, "通关统计", 1.4, _white, _panel, fa_left, 270)
+	var _seconds = floor(obj_battle.battle_time / 60)
+	var _time = string(floor(_seconds / 60)) + ":" + string_format(_seconds mod 60, 2, 0)
+	_time = string_replace_all(_time, " ", "0")
+	victory_text(240, 400, "通关时间", 0.9, _muted, _panel, fa_left, 270)
+	victory_text(240, 443, _time, 2.1, _white, _panel, fa_left, 270)
+	victory_text(240, 511, "卡片损失", 0.9, _muted, _panel, fa_left, 180)
+	victory_text(512, 511, string(obj_task_manager.card_loss), 1.4, _white, _panel, fa_right, 85)
+	victory_text(240, 554, "猫损失", 0.9, _muted, _panel, fa_left, 180)
+	victory_text(512, 554, string(obj_task_manager.cat_loss), 1.4, _white, _panel, fa_right, 85)
+	victory_text(240, 597, "难度", 0.9, _muted, _panel, fa_left, 180)
+	victory_text(512, 597, string(global.difficulty), 1.1, _white, _panel, fa_right, 170)
+	for (var _i = 0; _i < array_length(victory_milestones); _i++) {
+		var _a = victory_reveal(0.5 + _i * 0.1)
+		victory_text(240, 692 + _i * 41, victory_milestones[_i], 0.95, _teal, _a, fa_left, 276)
+	}
+
+	victory_text(590, 332, "通关奖励", 1.4, _white, _panel, fa_left, 500)
+	for (var _i = 0; _i < 4; _i++) {
+		var _index = victory_page * 4 + _i
+		if (_index >= array_length(victory_resources)) break;
+		var _entry = victory_resources[_index]
+		var _a = victory_reveal(0.45 + _i * 0.15)
+		var _x = 590 + _i * 278
+		var _y = 375 + (1 - _a) * 24
+		draw_set_alpha(_a)
+		draw_set_colour(make_colour_rgb(30, 49, 58))
+		draw_roundrect_ext(_x, _y, _x + 260, _y + 108, 14, 14, false)
+		victory_icon(_entry.sprite, _entry.frame, _x + 48, _y + 54, 62, 68, _a)
+		victory_text(_x + 92, _y + 31, _entry.name, 0.85, _muted, _a, fa_left, 153)
+		victory_text(_x + 92, _y + 74, "+" + string(_entry.amount), 1.6, _gold, _a, fa_left, 153)
+	}
+	if (array_length(victory_resources) == 0) {
+		victory_text(590, 428, "本关挑战已完成", 1.2, _muted, _panel, fa_left, 1000)
+	}
+	victory_text(590, 531, "获得物品", 1.4, _white, _panel, fa_left, 550)
+	var _unlocks_count = min(6, max(0, array_length(victory_unlocks) - victory_page * 6))
+	for (var _i = 0; _i < _unlocks_count; _i++) {
+		var _entry = victory_unlocks[victory_page * 6 + _i]
+		var _a = victory_reveal(0.95 + _i * 0.16)
+		var _x = 590 + _i * 185
+		var _y = 578 + (1 - _a) * 35
+		var _accent = _entry.card ? _gold : _teal
+		draw_set_alpha(_a * 0.22)
+		draw_set_colour(_accent)
+		draw_roundrect_ext(_x - 3, _y - 3, _x + 173, _y + 273, 16, 16, false)
+		draw_set_alpha(_a)
+		draw_set_colour(make_colour_rgb(27, 44, 53))
+		draw_roundrect_ext(_x, _y, _x + 170, _y + 270, 14, 14, false)
+		victory_text(_x + 85, _y + 24, _entry.kind, 0.75, _accent, _a, fa_center, 140)
+		if (_entry.card) {
+			victory_icon(spr_slot, 0, _x + 85, _y + 121, 118, 157, _a)
+			victory_icon(_entry.sprite, 0, _x + 85, _y + 110, 91, 94, _a)
+			victory_icon(spr_flame, 0, _x + 61, _y + 177, 17, 23, _a)
+			victory_text(_x + 78, _y + 176, string(_entry.cost), 0.7, make_colour_rgb(59, 39, 25), _a, fa_left, 52)
+		} else {
+			draw_set_alpha(_a * 0.08)
+			draw_set_colour(_accent)
+			draw_circle(_x + 85, _y + 126, 60, false)
+			victory_icon(_entry.sprite, 0, _x + 85, _y + 125, 96, 114, _a)
 		}
-		else if not global.game_over{
-			draw_text(room_width / 2, room_height / 2, "暂停中");
-		}
-		else{
-			if !settlement{
-				draw_text(room_width / 2, room_height / 2 + 150, "左键点击或按空格键继续……");
-			}
-			else{
-				draw_text(room_width / 2, room_height / 2 + 450, "左键点击或按空格键继续……");
-				//绘制结算界面
-				draw_set_halign(fa_left);
-				draw_set_valign(fa_top);
-				draw_text(630,225, "通关统计");
-				var minute = floor(obj_battle.battle_time/3600)
-				var second = obj_battle.battle_time/60 - minute * 60
-				draw_text(630,260, "通关时间："+string(minute)+":"+string(second));
-				draw_text(630,285,"卡片损失："+string(obj_task_manager.card_loss))
-				draw_text(630,310,"猫损失："+string(obj_task_manager.cat_loss))
-				draw_text(630,335,"难度："+string(global.difficulty))
-				if global.level_file.version != "1.0.0" && !global.laboretory_room{
-					if first_complete{
-						var item_string = ""
-						var item_list = global.level_file.rewards[1].items
-						for(var i = 0 ; i < array_length(item_list) ; i++){
-							var item_id = item_list[i].id
-							var item_data = get_material_info(item_id)
-							item_string += (item_data.name + "（"+string(item_list[i].amount)+"） ")
-						}
-						//draw_text(100,900,item_string)
-						//draw_text(100,940,"等级："+string(global.level_file.rewards[1].player_level)+"级")
-						var card_string = ""
-						var card_unlock_id_list = global.level_file.rewards[1].card_unlock
-						for(var i = 0 ; i < array_length(card_unlock_id_list) ; i++){
-							var card_id = card_unlock_id_list[i]
-							var card_data = get_plant_shape_data(card_id,0)
-							card_string += (card_data[? "name"] + " ")
-						}
-						//draw_text(100,980,"卡片解锁："+card_string)
-						var weapon_string = ""
-						var weapon_unlock_id_list = global.level_file.rewards[1].weapon_unlock
-						for(var i = 0 ; i < array_length(weapon_unlock_id_list) ; i++){
-							var weapon_id = weapon_unlock_id_list[i]
-							var weapon_data = get_weapon_info(weapon_id)
-							weapon_string += (weapon_data.name + " ")
-						}
-						//draw_text(100,1020,"武器解锁："+weapon_string)
-						var gem_string = ""
-						var gem_unlock_id_list = global.level_file.rewards[1].gem_unlock
-						for(var i = 0 ; i < array_length(gem_unlock_id_list) ; i++){
-							var gem_id = gem_unlock_id_list[i]
-							var gem_data = get_gem_info(gem_id)
-							gem_string += (gem_data.name + " ")
-						}
-						//draw_text(100,1060,"宝石解锁："+gem_string)
-						draw_text(1200,225, "关卡奖励");
-						draw_text(1200,260,"金币（"+string(global.level_file.rewards[1].gold)+"）")
-						draw_text(1200,285,"技能："+string(global.level_file.rewards[1].skill_level)+"级")
-						draw_text(1200,310,item_string)
-						draw_text(1200,335,"等级："+string(global.level_file.rewards[1].player_level)+"级")
-						draw_text(1200,360,"卡片解锁："+card_string)
-						draw_text(1200,385,"武器解锁："+weapon_string)
-						draw_text(1200,410,"宝石解锁："+gem_string)
-						if global.level_data.id == "champagne_island_water"{
-							draw_set_colour(c_yellow)
-							draw_text(1200,435,"你已解锁精英段，击败洞君和阿诺各一次以解锁神殿")
-						}
-						if global.level_data.id == "abyss"{
-							draw_set_colour(c_yellow)
-							draw_text(1200,435,"你的铲子已升级为铜铲")
-						}
-						if global.level_data.id == "macchiato_port"{
-							draw_set_colour(c_yellow)
-							draw_text(1200,435,"你的铲子已升级为银铲")
-						}
-						if global.level_data.id == "snowcap_volcano"{
-							draw_set_colour(c_yellow)
-							draw_text(1200,435,"你的铲子已升级为金铲")
-						}
-						if global.level_data.id == "tower_cake_35_3"{
-							draw_set_colour(c_yellow)
-							draw_text(1200,435,"你已在背包内的“冒险战绩”中获得勋章")
-						}
-						
-					}
-					else{
-						draw_text(1200,225, "关卡奖励");
-						var item_string = ""
-						var item_list = global.level_file.rewards[0].items
-						for(var i = 0 ; i < array_length(item_list) ; i++){
-							var item_id = item_list[i].id
-							var item_data = get_material_info(item_id)
-							item_string += (item_data.name + "（"+string(item_list[i].amount)+"） ")
-						}
-						draw_text(1200,260,"金币（"+string(global.level_file.rewards[0].gold)+"）")
-						draw_text(1200,285,item_string)
-					}
-				}
-			}
-			if obj_game_over.sprite_index == spr_lose{
-				draw_text(room_width / 2, room_height / 2 + 175, "按R重新开始")
-			}
-		}
-    }
+		victory_text(_x + 85, _y + 224, _entry.name, 0.95, _white, _a, fa_center, 148)
+		victory_text(_x + 85, _y + 249, "已解锁", 0.65, _accent, _a, fa_center, 148)
+	}
+	if (_unlocks_count == 0) {
+		draw_set_alpha(_panel)
+		draw_set_colour(make_colour_rgb(24, 43, 52))
+		draw_roundrect_ext(590, 578, 1700, 848, 16, 16, false)
+		victory_text(1145, 699, "每一次胜利，都让冒险更进一步", 1.5, _white, _panel, fa_center, 990)
+		victory_text(1145, 748, "继续探索，收集更多卡片", 1, _muted, _panel, fa_center, 990)
+	}
+
+	var _ready = victory_time >= victory_duration
+	victory_text(230, 976, _ready ? "空格继续    左右方向键查看奖励" : "点击或按空格键，立即展示全部奖励", 0.9, _muted, _intro, fa_left, 920)
+	if (victory_pages > 1) {
+		victory_text(1240, 977, "<", 1.5, _muted, _intro, fa_center, 50)
+		victory_text(1300, 977, string(victory_page + 1) + "/" + string(victory_pages), 0.9, _white, _intro, fa_center, 60)
+		victory_text(1360, 977, ">", 1.5, _muted, _intro, fa_center, 50)
+	}
+	var _hover = point_in_rectangle(mouse_x, mouse_y, 1430, 942, 1710, 1012)
+	draw_set_alpha(_intro)
+	draw_set_colour(_hover ? make_colour_rgb(255, 222, 152) : _gold)
+	draw_roundrect_ext(1430, 942, 1710, 1012, 18, 18, false)
+	victory_text(1570, 977, !_ready ? "跳过动画" : (victory_page < victory_pages - 1 ? "下一页" : "返回地图"), 1.15, make_colour_rgb(37, 37, 32), _intro, fa_center, 240)
+	draw_set_alpha(1)
+	draw_set_colour(c_white)
+	draw_set_halign(fa_left)
+	draw_set_valign(fa_top)
+	exit;
+}
+
+// Preserve the existing pause and defeat presentation.
+if (global.is_paused && !global.show_menu) {
+	draw_set_alpha(0.5)
+	draw_set_colour(c_black)
+	draw_rectangle(0, 0, room_width, room_height, false)
+	draw_set_alpha(1)
+	draw_set_font(font_yuan)
+	draw_set_halign(fa_center)
+	draw_set_valign(fa_middle)
+	draw_set_colour(c_white)
+	if (obj_battle.battle_time == 1) {
+		draw_sprite_ext(spr_place_player_tip, 0, room_width / 2, room_height / 2, 1.8, 1.8, 0, c_white, 1)
+	} else if (!global.game_over) {
+		draw_text(room_width / 2, room_height / 2, "暂停中")
+	} else {
+		draw_text(room_width / 2, room_height / 2 + 150, "左键点击或按空格键继续……")
+		if (obj_game_over.sprite_index == spr_lose) draw_text(room_width / 2, room_height / 2 + 175, "按R重新开始")
+	}
 }
