@@ -9,6 +9,7 @@ MAX_PROFILE = 256 * 1024
 MAX_STATE = 768 * 1024
 MAX_COMMANDS = 100000
 MAX_SEQ = 2147483647
+MAX_DECK = 31
 ID = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 
 
@@ -44,6 +45,34 @@ def identifier(value, field):
 
 def encode(value):
     return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
+def campaign_progress(profile):
+    """Play time changes every frame and must not invalidate a confirmed deck."""
+    result = dict(profile)
+    if isinstance(result.get("player"), dict):
+        result["player"] = {key: value for key, value in result["player"].items() if key != "total_time"}
+    return result
+
+
+def card_library(profile):
+    cards, items = profile.get("unlocked_cards"), profile.get("unlocked_items")
+    require(isinstance(cards, list) and isinstance(items, dict), "invalid_library", "Host profile has no card library")
+    limit = integer(items.get("max_slot"), "max_slot", 1, MAX_DECK)
+    allowed = set()
+    for card in cards:
+        require(isinstance(card, dict), "invalid_library", "Invalid unlocked card")
+        allowed.add(identifier(card.get("id"), "card_id"))
+    return allowed, limit
+
+
+def loadout_deck(deck, allowed, limit, ready=False):
+    require(isinstance(deck, list) and len(deck) <= limit, "invalid_loadout", "Deck exceeds the available slots")
+    for card in deck:
+        require(isinstance(card, str) and card in allowed, "invalid_loadout", "Card is not in the shared host library")
+    require(len(set(deck)) == len(deck), "invalid_loadout", "A deck cannot contain duplicate cards")
+    require(not ready or len(deck) > 0, "invalid_loadout", "Choose at least one card before confirming")
+    return list(deck)
 
 
 def json_object(value, field, maximum):

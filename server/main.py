@@ -18,8 +18,9 @@ from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
 from protocol import (MAX_COMMANDS, MAX_MESSAGE, MAX_PROFILE, MAX_STATE, VERSION,
-                      ProtocolError, decode, encode, identifier, input_payload,
-                      integer, json_object, require, string)
+                      MAX_DECK, ProtocolError, campaign_progress, decode, encode,
+                      identifier, input_payload, integer, json_object, loadout_deck,
+                      require, string)
 from storage import Store, new_id, new_token, token_hash
 
 LOG = logging.getLogger("fvm.coop")
@@ -55,6 +56,7 @@ class GameServer:
         self.live_checkpoints = {}
         self.checkpoint_written_at = {}
         self.checkpoint_written_tick = {}
+        self.store.reset_readiness()
 
     def state(self, client, after=None):
         connected = {player for (room, player) in self.clients if room == client.room_id}
@@ -83,6 +85,8 @@ class GameServer:
     async def attach(self, client, room_id, player_id, role):
         key = (room_id, player_id)
         previous = self.clients.get(key)
+        with self.store.transaction():
+            self.store.clear_ready(room_id)
         client.authenticated = True
         client.room_id, client.player_id, client.role = room_id, player_id, role
         self.clients[key] = client
@@ -155,6 +159,99 @@ class GameServer:
                 "invalid_profiles", "Supply exactly the room's two player profiles")
         return {player: json_object(profile, "profile", MAX_PROFILE) for player, profile in supplied.items()}
 
+    def loadout_request(self, client, request):
+        """All preparation edits and their retry receipts commit atomically."""
+        kind, db = request["type"], self.store.db
+        if kind != "set_loadout":
+            self.require_host(client)
+        json_object(request, "preparation request", MAX_MESSAGE)
+        canonical = json.dumps(request, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        digest = hashlib.sha256(canonical.encode()).hexdigest()
+        with self.store.transaction():
+            previous = db.execute("SELECT * FROM preparation_requests WHERE room_id=? AND player_id=? AND request_id=?",
+                                  (client.room_id,client.player_id,request["request_id"])).fetchone()
+            if previous:
+                require(previous["payload_hash"] == digest, "request_conflict", "Request ID was already used with different data")
+                response = json.loads(previous["response_json"])
+                if response["type"] == "match_started":
+                    require(self.store.room(client.room_id)["match_id"] == response["match_id"],
+                            "stale_preparation", "This request belongs to an older match")
+                response["duplicate"] = True
+                return {**response, "state": self.state(client)}, []
+            room = self.store.room(client.room_id)
+            require(room["status"] in ("lobby", "finished"), "match_already_running", "A match is already running")
+            members = self.store.members(client.room_id)
+            allowed, limit = self.store.library(client.room_id)
+            if kind == "prepare_match":
+                require(len(members) == 2, "players_not_ready", "Both room members must join first")
+                level = identifier(request.get("level_id"), "level_id")
+                level_name = string(request.get("level_name", level), "level_name", 160)
+                integer(request.get("slot_limit"), "slot_limit", 1, MAX_DECK)
+                selections = {}
+                for member in members:
+                    deck, cached = self.store.cached_deck(client.room_id, member["player_id"], level, allowed, limit)
+                    selections[member["player_id"]] = {"deck": deck, "ready": False, "cached": cached}
+                preparation = {"id": new_id(), "level_id": level, "level_name": level_name,
+                               "slot_limit": limit, "selections": selections, "revision": 1}
+                self.store.write_preparation(client.room_id, preparation)
+                response = {"type": "loadout_state", "duplicate": False}
+            else:
+                preparation_id = identifier(request.get("preparation_id"), "preparation_id")
+                preparation = self.store.preparation(client.room_id)
+                require(preparation is not None and preparation["id"] == preparation_id,
+                        "stale_preparation", "Reload the current preparation")
+                revision = integer(request.get("revision"), "revision", 1)
+                require(revision == preparation["revision"], "preparation_conflict", "Preparation changed; confirm the latest deck")
+                if kind == "cancel_preparation":
+                    db.execute("DELETE FROM preparations WHERE room_id=?", (client.room_id,))
+                    response = {"type": "loadout_state", "duplicate": False}
+                elif kind == "set_loadout":
+                    ready = request.get("ready")
+                    require(type(ready) is bool, "invalid_loadout", "ready must be boolean")
+                    deck = loadout_deck(request.get("deck"), allowed, limit, ready)
+                    selection = preparation["selections"][client.player_id]
+                    if deck != selection["deck"]:
+                        for value in preparation["selections"].values():
+                            value["ready"] = False
+                        selection["cached"] = False
+                    selection.update(deck=deck, ready=ready)
+                    preparation["revision"] += 1
+                    self.store.cache_deck(client.room_id, client.player_id, preparation["level_id"], deck)
+                    self.store.write_preparation(client.room_id, preparation)
+                    response = {"type": "loadout_state", "duplicate": False}
+                else:
+                    require(len(members) == 2 and all((client.room_id,m["player_id"]) in self.clients for m in members),
+                            "players_not_ready", "Both players must be connected")
+                    level = identifier(request.get("level_id"), "level_id")
+                    require(level == preparation["level_id"], "stale_preparation", "Prepared level does not match")
+                    loadouts = {}
+                    for member in members:
+                        selection = preparation["selections"][member["player_id"]]
+                        require(selection["ready"], "players_not_ready", "Both players must confirm their decks")
+                        loadouts[member["player_id"]] = loadout_deck(selection["deck"], allowed, limit, True)
+                    # Profile mutations belong to save_campaign, where they
+                    # invalidate readiness. Never allow start to bypass it.
+                    if "profiles" in request:
+                        profiles = self.validated_profiles(client, request["profiles"])
+                        require(all(campaign_progress(json.loads(profiles[m["player_id"]])) == campaign_progress(json.loads(m["profile_json"])) for m in members),
+                                "profiles_changed", "Commit campaign changes before preparing a match")
+                    json_object(request.get("config", {}), "config", 16384)
+                    config = {**request.get("config", {}), "loadouts": loadouts,
+                              "per_player_loadouts": True, "flame_ratio": 0.6,
+                              "shared_campaign": True, "preparation_id": preparation_id,
+                              "level_id": level}
+                    config_json = json_object(config, "config", 16384)
+                    match_id = new_id()
+                    db.execute("INSERT INTO matches VALUES (?,?,?,?, 'running',?)", (match_id,client.room_id,level,config_json,time.time()))
+                    db.execute("UPDATE rooms SET status='running',match_id=? WHERE room_id=?", (match_id,client.room_id))
+                    db.execute("UPDATE members SET last_seq=0 WHERE room_id=?", (client.room_id,))
+                    db.execute("DELETE FROM preparations WHERE room_id=?", (client.room_id,))
+                    response = {"type": "match_started", "match_id": match_id, "duplicate": False}
+            db.execute("INSERT INTO preparation_requests VALUES (?,?,?,?,?)",
+                       (client.room_id,client.player_id,request["request_id"],digest,encode(response)))
+        response["state"] = self.state(client)
+        return response, [(response, None, client)]
+
     async def dispatch(self, client, request):
         if not client.authenticated:
             return await self.authenticate(client, request)
@@ -181,6 +278,8 @@ class GameServer:
             return {"type": "pong", "server_time": time.time()}, []
         if kind == "leave":
             return {"type": "left"}, []
+        if kind in ("prepare_match", "set_loadout", "cancel_preparation", "start_match"):
+            return self.loadout_request(client, request)
         if kind in ("new_invite", "refresh_invite"):
             self.require_host(client)
             require(len(self.store.members(client.room_id)) == 1, "room_full", "Room already has two players")
@@ -210,31 +309,19 @@ class GameServer:
                     require(self.store.room(client.room_id)["status"] in ("lobby", "finished"), "match_running", "Save campaign outside an active match")
                     if revisions is not None:
                         require(all(revisions[m["player_id"]] == m["revision"] for m in self.store.members(client.room_id)), "revision_conflict", "Reload the latest profiles before saving")
+                    changed = any(campaign_progress(json.loads(profiles[m["player_id"]])) != campaign_progress(json.loads(m["profile_json"]))
+                                  for m in self.store.members(client.room_id))
                     for player, profile in profiles.items():
                         db.execute("UPDATE profiles SET profile_json=?,revision=revision+1,updated_at=? WHERE player_id=?", (profile,time.time(),player))
+                    if changed:
+                        self.store.clear_ready(client.room_id, refresh_library=True)
                     reply = {"type": "campaign_saved", "committed": True, "duplicate": False, "profiles": self.persisted_profiles(client.room_id)}
                     db.execute("INSERT INTO campaign_commits VALUES (?,?,?,?,?)", (client.room_id,request["request_id"],digest,encode(reply),time.time()))
-            return reply, ([] if reply["duplicate"] else [({"type": "campaign_updated", "profiles": reply["profiles"]}, "guest", None)])
-        if kind == "start_match":
-            self.require_host(client)
-            room = self.store.room(client.room_id)
-            require(room["status"] in ("lobby", "finished"), "match_already_running", "A match is already running")
-            members = self.store.members(client.room_id)
-            require(len(members) == 2 and all((client.room_id,m["player_id"]) in self.clients for m in members),
-                    "players_not_ready", "Both players must be connected")
-            level = identifier(request.get("level_id"), "level_id")
-            config = json_object(request.get("config", {}), "config", 16384)
-            profiles = self.validated_profiles(client, request.get("profiles"), False)
-            match_id = new_id()
-            with self.store.transaction():
-                self.store.db.execute("INSERT INTO matches VALUES (?,?,?,?, 'running',?)", (match_id,client.room_id,level,config,time.time()))
-                self.store.db.execute("UPDATE rooms SET status='running',match_id=? WHERE room_id=?", (match_id,client.room_id))
-                self.store.db.execute("UPDATE members SET last_seq=0 WHERE room_id=?", (client.room_id,))
-                if "profiles" in request:
-                    for player, profile in profiles.items():
-                        self.store.db.execute("UPDATE profiles SET profile_json=?,revision=revision+1,updated_at=? WHERE player_id=?", (profile,time.time(),player))
-            response = {"type": "match_started", "match_id": match_id, "state": self.state(client)}
-            return response, [(response, None, client)]
+            events = [] if reply["duplicate"] else [({"type": "campaign_updated", "profiles": reply["profiles"]}, "guest", None)]
+            reply["state"] = self.state(client)
+            if not reply["duplicate"] and reply["state"]["preparation"] is not None:
+                events.append(({"type": "loadout_state", "state": reply["state"]}, None, client))
+            return reply, events
         if kind == "input":
             match_id = self.require_match(client, request)
             seq = integer(request.get("seq"), "seq", 1)
@@ -340,6 +427,8 @@ class GameServer:
                 except ProtocolError as error:
                     reply = {"v": VERSION, "type": "error", "code": error.code, "message": str(error)}
                     if request: reply["request_id"] = request["request_id"]
+                    if error.code in ("preparation_conflict", "stale_preparation") and client.room_id:
+                        reply["state"] = self.state(client)
                     await socket.send(encode(reply))
                     if not client.authenticated or error.code in ("rate_limited", "session_replaced"):
                         await socket.close(1008, "Protocol or authentication policy")
@@ -363,6 +452,8 @@ class GameServer:
             if self.clients.get(key) is client:
                 del self.clients[key]
                 try:
+                    with self.store.transaction():
+                        self.store.clear_ready(client.room_id)
                     self.flush_checkpoint(self.store.room(client.room_id)["match_id"])
                     await self.broadcast(client.room_id, {"type": "player_disconnected", "player_id": client.player_id, "state": self.state(client)})
                 except (sqlite3.Error, OSError):

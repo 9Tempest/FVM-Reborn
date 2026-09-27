@@ -8,18 +8,26 @@ import stat
 import sys
 import tempfile
 import unittest
+import uuid
 
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 
+def profile(**changes):
+    return {"coins": 100, "name": "合作测试", "player": {"total_time": 0},
+            "unlocked_cards": [{"id": card, "level": 1, "shape": 0} for card in ("sunflower", "toast_bread", "ice_cream")],
+            "unlocked_items": {"max_slot": 2}, **changes}
+
+
 class Peer:
     def __init__(self, socket):
         self.socket, self.counter, self.events = socket, 0, []
+        self.prefix = uuid.uuid4().hex
 
     async def rpc(self, kind, request_id=None, **fields):
         self.counter += 1
-        request_id = request_id or f"r{self.counter}"
+        request_id = request_id or f"{self.prefix}-{self.counter}"
         await self.socket.send(json.dumps({"v": 1, "type": kind, "request_id": request_id, **fields}, ensure_ascii=False))
         while True:
             message = json.loads(await asyncio.wait_for(self.socket.recv(), 4))
@@ -97,7 +105,7 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
     async def room(self):
         host = await self.peer()
         self.assertEqual((await host.rpc("auth_host", token=self.token))["type"], "host_authenticated")
-        created = await host.rpc("create_room", profile={"coins": 100, "name": "合作测试", "cards": ["sunflower"]})
+        created = await host.rpc("create_room", profile=profile())
         self.assertEqual(created["type"], "room_created")
         guest = await self.peer()
         joined = await guest.rpc("join_room", room_id=created["room_id"], invite_token=created["invite_token"], name="客人")
@@ -106,9 +114,34 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
 
     async def match(self):
         host, guest, created, joined = await self.room()
-        match = await host.rpc("start_match", level_id="1-1", config={"shared_campaign": True})
+        match = await self.start_match(host, guest)
         self.assertEqual(match["type"], "match_started")
         return host, guest, created, joined, match["match_id"]
+
+    async def prepare(self, host, level="1-1"):
+        response = await host.rpc("prepare_match", level_id=level, level_name="测试关卡", slot_limit=31)
+        self.assertEqual(response["type"], "loadout_state", response)
+        return response["state"]["preparation"]
+
+    async def select(self, peer, preparation, deck, ready=False, **extra):
+        response = await peer.rpc("set_loadout", preparation_id=preparation["id"],
+                                  revision=preparation["revision"], deck=deck, ready=ready, **extra)
+        self.assertEqual(response["type"], "loadout_state", response)
+        return response["state"]["preparation"]
+
+    async def ready(self, host, guest, level="1-1"):
+        preparation = await self.prepare(host, level)
+        preparation = await self.select(host, preparation, ["sunflower"])
+        preparation = await self.select(guest, preparation, ["toast_bread"])
+        preparation = await self.select(host, preparation, ["sunflower"], True)
+        return await self.select(guest, preparation, ["toast_bread"], True)
+
+    async def start_match(self, host, guest, level="1-1", **extra):
+        preparation = await self.ready(host, guest, level)
+        response = await host.rpc("start_match", level_id=level, preparation_id=preparation["id"],
+                                  revision=preparation["revision"], config={"shared_campaign": True}, **extra)
+        self.assertEqual(response["type"], "match_started", response)
+        return response
 
     def query(self, sql, parameters=()):
         with contextlib.closing(sqlite3.connect(self.data / "coop.sqlite3")) as db:
@@ -125,7 +158,7 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         saved = await host.rpc("snapshot", match_id=match_id, tick=50, applied_command_id=ack["command_id"], state=snapshot)
         self.assertTrue(saved["persisted"])
         self.assertEqual((await guest.event("snapshot"))["state"], snapshot)
-        profiles = {created["player_id"]: {"coins": 150, "level": "1-2"}, joined["player_id"]: {"coins": 150, "level": "1-2"}}
+        profiles = {created["player_id"]: profile(coins=150, level="1-2"), joined["player_id"]: profile(coins=150, level="1-2")}
         result = {"outcome": "victory", "reward": {"coins": 50}}
         won = await host.rpc("match_result", match_id=match_id, result=result, profiles=profiles)
         self.assertTrue(won["committed"])
@@ -160,7 +193,8 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(retry["duplicate"])
         self.assertEqual(retry["profiles"], won["profiles"])
         # Starting a later match must not allow a delayed result retry to award again.
-        await resumed_host.rpc("start_match", level_id="1-2", profiles={p: {"coins": 175} for p in profiles})
+        await resumed_host.rpc("save_campaign", profiles={p: profile(coins=175) for p in profiles})
+        await self.start_match(resumed_host, resumed_guest, "1-2")
         old_retry = await resumed_host.rpc("match_result", match_id=match_id, result=result, profiles=profiles)
         self.assertTrue(old_retry["duplicate"])
         self.assertEqual(old_retry["profiles"], won["profiles"])
@@ -207,7 +241,7 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         host, guest, created, joined = await self.room()
         third = await self.peer()
         self.assertEqual((await third.rpc("join_room", room_id=created["room_id"], invite_token=created["invite_token"]))["code"], "invite_invalid")
-        for kind in ("start_match", "snapshot", "match_result", "new_invite", "backup", "save_campaign"):
+        for kind in ("start_match", "prepare_match", "cancel_preparation", "snapshot", "match_result", "new_invite", "backup", "save_campaign"):
             self.assertEqual((await guest.rpc(kind))["code"], "forbidden")
         replacement = await self.peer()
         resumed = await replacement.rpc("resume", room_id=created["room_id"], resume_token=joined["resume_token"])
@@ -233,7 +267,7 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
 
     async def test_campaign_transactions_revisions_retry_and_restart(self):
         host, guest, created, joined = await self.room()
-        profiles = {created["player_id"]: {"coins": 90, "equipped": "card1"}, joined["player_id"]: {"coins": 90, "equipped": "card1"}}
+        profiles = {created["player_id"]: profile(coins=90, equipped="card1"), joined["player_id"]: profile(coins=90, equipped="card1")}
         fields = dict(profiles=profiles, revisions={created["player_id"]: 1, joined["player_id"]: 1})
         ack = await host.rpc("save_campaign", request_id="purchase-123", **fields)
         self.assertEqual(ack["type"], "campaign_saved")
@@ -241,7 +275,7 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await guest.event("campaign_updated"))["profiles"], ack["profiles"])
         self.assertEqual((await host.rpc("save_campaign", request_id="purchase-456", **fields))["code"], "revision_conflict")
         self.assertEqual((await host.rpc("save_campaign", request_id="purchase-123", profiles={p: {"coins": 80} for p in profiles}))["code"], "request_conflict")
-        await host.rpc("start_match", level_id="1-1")
+        await self.start_match(host, guest)
         self.assertEqual((await host.rpc("save_campaign", profiles=profiles))["code"], "match_running")
         await self.stop(abrupt=True)
         await self.start()
@@ -335,6 +369,200 @@ class EndToEnd(unittest.IsolatedAsyncioTestCase):
         guest = await self.peer()
         self.assertEqual((await guest.rpc("join_room", room_id=room["room_id"], invite_token=refreshed["invite_token"]))["type"], "room_joined")
         self.assertEqual((await host.rpc("refresh_invite"))["code"], "room_full")
+
+    async def test_loadout_validation_readiness_start_and_immutable_config(self):
+        host, guest, created, joined = await self.room()
+        self.assertEqual((await host.rpc("start_match", level_id="1-1"))["type"], "error")
+        preparation = await self.prepare(host)
+        self.assertEqual(preparation["slot_limit"], 2)  # Never trust requested 31 slots.
+        self.assertFalse(any(s["cached"] for s in preparation["selections"].values()))
+        state = (await guest.rpc("get_state"))["state"]
+        self.assertTrue(state["features"]["personal_loadouts"])
+        self.assertEqual(state["room_status"], "lobby")
+        for deck, ready in [(["locked"], False), (["sunflower"] * 2, False),
+                            (["sunflower", "toast_bread", "ice_cream"], False), ([], True), ([3], False)]:
+            bad = await guest.rpc("set_loadout", preparation_id=preparation["id"], revision=preparation["revision"], deck=deck, ready=ready)
+            self.assertEqual(bad["code"], "invalid_loadout")
+        self.assertEqual(self.query("SELECT COUNT(*) FROM loadout_cache"), [(0,)])
+        preparation = await self.select(host, preparation, ["sunflower"], True)
+        stale = dict(preparation)
+        preparation = await self.select(guest, preparation, ["sunflower"], True)
+        self.assertFalse(preparation["selections"][created["player_id"]]["ready"])
+        # Shared library permits the same card across the two independent decks.
+        self.assertEqual(preparation["selections"][joined["player_id"]]["deck"], ["sunflower"])
+        fields = dict(preparation_id=preparation["id"], revision=preparation["revision"], level_id="1-1")
+        self.assertEqual((await host.rpc("start_match", **fields))["code"], "players_not_ready")
+        conflict = await host.rpc("set_loadout", preparation_id=stale["id"], revision=stale["revision"], deck=["sunflower"], ready=True)
+        self.assertEqual(conflict["code"], "preparation_conflict")
+        self.assertEqual(conflict["state"]["preparation"], preparation)
+        preparation = await self.select(host, preparation, ["sunflower"], True)
+        fields["revision"] = preparation["revision"]
+        self.assertEqual((await host.rpc("start_match", **{**fields, "level_id": "wrong"}))["code"], "stale_preparation")
+        config = {"loadouts": {"attacker": ["locked"]}, "per_player_loadouts": False,
+                  "flame_ratio": 50, "shared_campaign": False, "preparation_id": "wrong"}
+        started = await host.rpc("start_match", request_id="start-once", config=config, **fields)
+        self.assertEqual(started["type"], "match_started")
+        expected = {created["player_id"]: ["sunflower"], joined["player_id"]: ["sunflower"]}
+        frozen = started["state"]["config"]
+        self.assertEqual(frozen["loadouts"], expected)
+        self.assertEqual(frozen["flame_ratio"], 0.6)
+        self.assertTrue(frozen["per_player_loadouts"] and frozen["shared_campaign"])
+        self.assertEqual(frozen["preparation_id"], preparation["id"])
+        self.assertIsNone(started["state"]["preparation"])
+        repeated = await host.rpc("start_match", request_id="start-once", config=config, **fields)
+        self.assertTrue(repeated["duplicate"])
+        self.assertEqual(repeated["match_id"], started["match_id"])
+        self.assertEqual(self.query("SELECT COUNT(*) FROM matches"), [(1,)])
+        self.assertEqual((await guest.rpc("set_loadout", preparation_id=preparation["id"], revision=preparation["revision"], deck=[], ready=False))["code"], "match_already_running")
+        self.assertEqual((await guest.rpc("get_state"))["state"]["config"], frozen)
+        await self.stop(abrupt=True)
+        await self.start()
+        host = await self.peer()
+        await host.rpc("resume", room_id=created["room_id"], resume_token=created["resume_token"])
+        repeated = await host.rpc("start_match", request_id="start-once", config=config, **fields)
+        self.assertTrue(repeated["duplicate"])
+        self.assertEqual(repeated["match_id"], started["match_id"])
+        self.assertEqual(repeated["state"]["config"], frozen)
+        self.assertEqual(self.query("SELECT COUNT(*) FROM matches"), [(1,)])
+
+    async def test_loadout_per_player_level_cache_cancel_and_stale_requests(self):
+        host, guest, created, joined = await self.room()
+        preparation = await self.prepare(host)
+        first_id = preparation["id"]
+        fields = dict(preparation_id=first_id, revision=preparation["revision"], deck=["sunflower"], ready=False)
+        first = await host.rpc("set_loadout", request_id="first-edit", **fields)
+        preparation = first["state"]["preparation"]
+        preparation = await self.select(guest, preparation, ["toast_bread"])
+        cancellation = dict(preparation_id=first_id, revision=preparation["revision"])
+        cancelled = await host.rpc("cancel_preparation", request_id="cancel-once", **cancellation)
+        self.assertIsNone(cancelled["state"]["preparation"])
+        preparation = await self.prepare(host, "1-2")
+        self.assertEqual(preparation["selections"][created["player_id"]]["deck"], ["sunflower"])
+        self.assertEqual(preparation["selections"][joined["player_id"]]["deck"], ["toast_bread"])
+        self.assertTrue(all(s["cached"] and not s["ready"] for s in preparation["selections"].values()))
+        preparation = await self.select(host, preparation, ["ice_cream"])
+        preparation = await self.select(guest, preparation, ["sunflower"])
+        # Retrying a committed cancel or old edit must not mutate a newer preparation.
+        self.assertEqual((await host.rpc("cancel_preparation", request_id="cancel-once", **cancellation))["state"]["preparation"], preparation)
+        duplicate = await host.rpc("set_loadout", request_id="first-edit", **fields)
+        self.assertTrue(duplicate["duplicate"])
+        self.assertEqual(duplicate["state"]["preparation"], preparation)
+        self.assertEqual((await host.rpc("set_loadout", request_id="first-edit", **{**fields, "deck": []}))["code"], "request_conflict")
+        self.assertEqual((await host.rpc("set_loadout", **fields))["code"], "stale_preparation")
+        original = await self.prepare(host, "1-1")
+        self.assertEqual(original["selections"][created["player_id"]]["deck"], ["sunflower"])
+        self.assertEqual(original["selections"][joined["player_id"]]["deck"], ["toast_bread"])
+        fallback = await self.prepare(host, "1-3")
+        self.assertEqual(fallback["selections"][created["player_id"]]["deck"], ["ice_cream"])
+        self.assertEqual(fallback["selections"][joined["player_id"]]["deck"], ["sunflower"])
+
+    async def test_loadout_disconnect_takeover_restart_and_durable_cache(self):
+        host, guest, created, joined = await self.room()
+        preparation = await self.ready(host, guest)
+        before = preparation["revision"]
+        await guest.socket.close()
+        disconnected = (await host.event("player_disconnected"))["state"]["preparation"]
+        self.assertGreater(disconnected["revision"], before)
+        self.assertFalse(any(s["ready"] for s in disconnected["selections"].values()))
+        blocked = await host.rpc("start_match", preparation_id=disconnected["id"], revision=disconnected["revision"], level_id="1-1")
+        self.assertEqual(blocked["code"], "players_not_ready")
+        guest = await self.peer()
+        resumed = await guest.rpc("resume", room_id=created["room_id"], resume_token=joined["resume_token"])
+        preparation = resumed["state"]["preparation"]
+        preparation = await self.select(host, preparation, ["sunflower"], True)
+        preparation = await self.select(guest, preparation, ["toast_bread"], True)
+        replacement = await self.peer()
+        replaced = await replacement.rpc("resume", room_id=created["room_id"], resume_token=joined["resume_token"])
+        preparation = replaced["state"]["preparation"]
+        self.assertFalse(any(s["ready"] for s in preparation["selections"].values()))
+        preparation = await self.select(host, preparation, ["sunflower"], True)
+        preparation = await self.select(replacement, preparation, ["toast_bread"], True)
+        before = preparation["revision"]
+        await self.stop(abrupt=True)
+        await self.start()
+        # Check disk before either peer resumes: restart itself cleared ready.
+        disk = json.loads(self.query("SELECT preparation_json FROM preparations")[0][0])
+        self.assertGreater(disk["revision"], before)
+        self.assertFalse(any(s["ready"] for s in disk["selections"].values()))
+        host, guest = await self.peer(), await self.peer()
+        await host.rpc("resume", room_id=created["room_id"], resume_token=created["resume_token"])
+        await guest.rpc("resume", room_id=created["room_id"], resume_token=joined["resume_token"])
+        restored = await self.prepare(host)
+        self.assertEqual(restored["selections"][created["player_id"]]["deck"], ["sunflower"])
+        self.assertEqual(restored["selections"][joined["player_id"]]["deck"], ["toast_bread"])
+        self.assertTrue(all(s["cached"] and not s["ready"] for s in restored["selections"].values()))
+
+    async def test_loadout_business_changes_invalidate_but_playtime_does_not(self):
+        host, guest, created, joined = await self.room()
+        preparation = await self.ready(host, guest)
+        preparation = await self.select(host, preparation, ["sunflower", "ice_cream"], True)
+        preparation = await self.select(guest, preparation, ["toast_bread"], True)
+        players = (created["player_id"], joined["player_id"])
+        profiles = {pid: profile(player={"total_time": 999}) for pid in players}
+        timed = await host.rpc("save_campaign", profiles=profiles)
+        self.assertEqual(timed["state"]["preparation"], preparation)
+        # start_match cannot smuggle a purchase/profile mutation past ready validation.
+        forged = await host.rpc("start_match", preparation_id=preparation["id"], revision=preparation["revision"],
+                                level_id="1-1", profiles={pid: profile(coins=900) for pid in players})
+        self.assertEqual(forged["code"], "profiles_changed")
+        profiles = {pid: profile(coins=90, unlocked_items={"max_slot": 1}, unlocked_cards=[{"id": "sunflower"}, {"id": "ice_cream"}]) for pid in players}
+        changed = await host.rpc("save_campaign", profiles=profiles)
+        newer = changed["state"]["preparation"]
+        self.assertGreater(newer["revision"], preparation["revision"])
+        self.assertEqual(newer["slot_limit"], 1)
+        self.assertFalse(any(s["ready"] for s in newer["selections"].values()))
+        self.assertEqual(newer["selections"][joined["player_id"]]["deck"], [])
+        self.assertEqual(newer["selections"][created["player_id"]]["deck"], ["sunflower"])
+        restored = await self.prepare(host)
+        self.assertEqual(restored["slot_limit"], 1)
+        self.assertEqual(restored["selections"][joined["player_id"]]["deck"], [])
+        self.assertTrue(restored["selections"][joined["player_id"]]["cached"])
+
+    async def test_loadout_request_atomicity_duplicate_prepare_and_revision_ordering(self):
+        host, guest, created, joined = await self.room()
+        fields = dict(level_id="1-1", level_name="测试", slot_limit=2.0)
+        response = await host.rpc("prepare_match", request_id="prepare-once", **fields)
+        preparation = response["state"]["preparation"]
+        preparation = await self.select(host, preparation, ["sunflower"], True)
+        repeated = await host.rpc("prepare_match", request_id="prepare-once", **fields)
+        self.assertEqual(repeated["state"]["preparation"], preparation)
+        self.assertTrue(repeated["duplicate"])
+        with contextlib.closing(sqlite3.connect(self.data / "coop.sqlite3")) as db:
+            db.execute("CREATE TRIGGER fail_receipt BEFORE INSERT ON preparation_requests BEGIN SELECT RAISE(ABORT, 'test disk failure'); END")
+        edit = dict(preparation_id=preparation["id"], revision=preparation["revision"], deck=["toast_bread"], ready=True)
+        self.assertEqual((await guest.rpc("set_loadout", request_id="atomic-edit", **edit))["code"], "storage_error")
+        self.assertEqual((await host.rpc("get_state"))["state"]["preparation"], preparation)
+        self.assertEqual(self.query("SELECT COUNT(*) FROM loadout_cache WHERE player_id=?", (joined["player_id"],)), [(0,)])
+        with contextlib.closing(sqlite3.connect(self.data / "coop.sqlite3")) as db:
+            db.execute("DROP TRIGGER fail_receipt")
+        accepted = await guest.rpc("set_loadout", request_id="atomic-edit", **edit)
+        self.assertEqual(accepted["type"], "loadout_state")
+        self.assertFalse(accepted["state"]["preparation"]["selections"][created["player_id"]]["ready"])
+        for kind in ("set_loadout", "cancel_preparation", "start_match"):
+            stale = await host.rpc(kind, **{**edit, "level_id": "1-1"})
+            self.assertEqual(stale["code"], "preparation_conflict")
+        self.assertEqual(self.query("SELECT COUNT(*) FROM matches"), [(0,)])
+
+    async def test_additive_schema_migration_preserves_old_rooms(self):
+        host, guest, created, joined = await self.room()
+        waiting_host = await self.peer()
+        await waiting_host.rpc("auth_host", token=self.token)
+        waiting_room = await waiting_host.rpc("create_room", profile=profile())
+        await self.stop()
+        with contextlib.closing(sqlite3.connect(self.data / "coop.sqlite3")) as db:
+            db.executescript("DROP TABLE preparations; DROP TABLE loadout_cache; DROP TABLE preparation_requests; PRAGMA user_version=1;")
+        await self.start()
+        self.assertEqual(self.query("PRAGMA user_version"), [(2,)])
+        new_guest = await self.peer()
+        joined_old = await new_guest.rpc("join_room", room_id=waiting_room["room_id"], invite_token=waiting_room["invite_token"])
+        self.assertEqual(joined_old["type"], "room_joined")
+        self.assertIsNone(joined_old["state"]["preparation"])
+        host, guest = await self.peer(), await self.peer()
+        old = await host.rpc("resume", room_id=created["room_id"], resume_token=created["resume_token"])
+        self.assertEqual(old["state"]["players"][0]["profile"], profile())
+        self.assertIsNone(old["state"]["preparation"])
+        await guest.rpc("resume", room_id=created["room_id"], resume_token=joined["resume_token"])
+        self.assertEqual((await self.start_match(host, guest))["type"], "match_started")
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ import sqlite3
 import time
 import uuid
 
-from protocol import encode, require
+from protocol import card_library, encode, require
 
 
 def new_id():
@@ -96,7 +96,22 @@ class Store:
                 payload_hash TEXT NOT NULL, response_json TEXT NOT NULL, committed_at REAL NOT NULL,
                 PRIMARY KEY(room_id, request_id)
             );
-            PRAGMA user_version=1;
+            CREATE TABLE IF NOT EXISTS preparations (
+                room_id TEXT PRIMARY KEY REFERENCES rooms(room_id),
+                preparation_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS loadout_cache (
+                room_id TEXT NOT NULL REFERENCES rooms(room_id), player_id TEXT NOT NULL,
+                level_id TEXT NOT NULL, deck_json TEXT NOT NULL, updated_at REAL NOT NULL,
+                PRIMARY KEY(room_id, player_id, level_id),
+                FOREIGN KEY(room_id, player_id) REFERENCES members(room_id, player_id)
+            );
+            CREATE TABLE IF NOT EXISTS preparation_requests (
+                room_id TEXT NOT NULL REFERENCES rooms(room_id), player_id TEXT NOT NULL,
+                request_id TEXT NOT NULL, payload_hash TEXT NOT NULL, response_json TEXT NOT NULL,
+                PRIMARY KEY(room_id, player_id, request_id)
+            );
+            PRAGMA user_version=2;
         """)
 
     @contextmanager
@@ -120,6 +135,55 @@ class Store:
 
     def member(self, room_id, player_id):
         return self.db.execute("SELECT * FROM members WHERE room_id=? AND player_id=?", (room_id, player_id)).fetchone()
+
+    def library(self, room_id):
+        host = next(member for member in self.members(room_id) if member["role"] == "host")
+        return card_library(json.loads(host["profile_json"]))
+
+    def preparation(self, room_id):
+        row = self.db.execute("SELECT preparation_json FROM preparations WHERE room_id=?", (room_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def write_preparation(self, room_id, preparation):
+        self.db.execute("INSERT INTO preparations VALUES (?,?) ON CONFLICT(room_id) DO UPDATE SET preparation_json=excluded.preparation_json",
+                        (room_id, encode(preparation)))
+
+    def clear_ready(self, room_id, refresh_library=False):
+        """Caller owns the transaction; no ready flag survives lost presence."""
+        preparation = self.preparation(room_id)
+        if preparation is None:
+            return False
+        if refresh_library:
+            allowed, limit = self.library(room_id)
+            preparation["slot_limit"] = limit
+        for selection in preparation["selections"].values():
+            selection["ready"] = False
+            if refresh_library:
+                filtered = [card for card in selection["deck"] if card in allowed][:limit]
+                selection["deck"] = filtered
+        # A business change invalidates even an in-flight ready request whose
+        # previous deck was not yet confirmed.
+        preparation["revision"] += 1
+        self.write_preparation(room_id, preparation)
+        return True
+
+    def reset_readiness(self):
+        with self.transaction():
+            for row in self.db.execute("SELECT room_id FROM preparations").fetchall():
+                self.clear_ready(row[0])
+
+    def cached_deck(self, room_id, player_id, level_id, allowed, limit):
+        row = self.db.execute("SELECT deck_json FROM loadout_cache WHERE room_id=? AND player_id=? AND level_id=?",
+                              (room_id,player_id,level_id)).fetchone()
+        if row is None:
+            row = self.db.execute("SELECT deck_json FROM loadout_cache WHERE room_id=? AND player_id=? ORDER BY updated_at DESC,rowid DESC LIMIT 1",
+                                  (room_id,player_id)).fetchone()
+        deck = json.loads(row[0]) if row else []
+        return [card for card in deck if card in allowed][:limit], row is not None
+
+    def cache_deck(self, room_id, player_id, level_id, deck):
+        self.db.execute("INSERT INTO loadout_cache VALUES (?,?,?,?,?) ON CONFLICT(room_id,player_id,level_id) DO UPDATE SET deck_json=excluded.deck_json,updated_at=excluded.updated_at",
+                        (room_id,player_id,level_id,encode(deck),time.time()))
 
     def create_room(self, profile_json, name, host_name, invite_ttl):
         room_id, player_id = new_id(), new_id()
@@ -163,7 +227,8 @@ class Store:
         result = {"room_id": room_id, "name": room["name"], "room_status": room["status"],
                   "match_id": room["match_id"], "level_id": None, "config": {}, "players": players,
                   "checkpoint": None, "pending_commands": [], "pending_commands_more": False,
-                  "result": None}
+                  "result": None, "features": {"personal_loadouts": True},
+                  "preparation": self.preparation(room_id) if room["status"] != "running" else None}
         if room["match_id"]:
             match = self.db.execute("SELECT * FROM matches WHERE match_id=?", (room["match_id"],)).fetchone()
             result.update(level_id=match["level_id"], config=json.loads(match["config_json"]))
