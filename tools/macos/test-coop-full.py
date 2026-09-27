@@ -62,15 +62,20 @@ def package(root,runtime,role,appid):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--reuse',type=Path,help='Recompile a previous isolated fixture with refreshed production sources')
+    parser.add_argument('--reuse-compiled',action='store_true',help='With --reuse, package fresh sandbox identities from its unchanged prior game.zip; useful for retrying external tunnel setup')
     parser.add_argument('--tunnel',action='store_true',help='Run both native clients through a disposable public WSS tunnel to the temporary test database')
     parser.add_argument('--cloudflared',type=Path,default=Path.home()/'Library/Application Support/FVM-Reborn/co-op/bin/cloudflared',help='Existing cloudflared binary used only with --tunnel')
     args=parser.parse_args()
+    if args.reuse_compiled and not args.reuse:parser.error('--reuse-compiled requires --reuse')
     os.umask(0o077)
     parent=Path.home()/'Library/Caches/FVM-Reborn/coop-full-tests';parent.mkdir(parents=True,exist_ok=True)
     root=args.reuse or Path(tempfile.mkdtemp(prefix='run-',dir=parent))
     print('Full-game fixture: '+str(root),flush=True)
     appid='io.github.9tempest.fvmreborn.coopfull.'+uuid.uuid4().hex
-    if args.reuse:
+    if args.reuse_compiled:
+        yypfile=root/'project/FVM-Reborn.yyp'
+        if not (root/'output/game.zip').is_file():raise RuntimeError('No compiled isolated game.zip exists in this fixture')
+    elif args.reuse:
         # Reuse immutable assets/cache, replacing every production source/metadata.
         project=root/'project'
         for group in ['scripts','objects']:
@@ -94,8 +99,8 @@ def main():
     runtime,igor,user=s.toolchain(Path(os.environ.get('FVM_GAMEMAKER_RUNTIME','/Users/Shared/GameMakerStudio2-LTS2026/Cache/runtimes/runtime-'+s.VERSION)))
     for name in ['cache','temp','output','logs']:(root/name).mkdir(exist_ok=True)
     command=[igor,'-j=1','/uf='+str(user),'/lf='+str(user/'licence.plist'),'/rp='+str(runtime),'/project='+str(yypfile),'/cache='+str(root/'cache'),'/temp='+str(root/'temp'),'/runtime=VM','/of='+str(root/'output/test'),'--','Mac','Compile']
-    s.command(command,root/'logs/compile.log',cwd=yypfile.parent,env=dict(os.environ,COMPlus_ZapDisable='1'),timeout=420)
-    print('Full game compiled; packaging isolated host and guest applications.',flush=True)
+    if not args.reuse_compiled:s.command(command,root/'logs/compile.log',cwd=yypfile.parent,env=dict(os.environ,COMPlus_ZapDisable='1'),timeout=420)
+    print('Packaging isolated host and guest applications from '+('existing' if args.reuse_compiled else 'newly compiled')+' game.zip.',flush=True)
     apps={}
     for role in ['host','guest']:
         prior=root/('FVM Co-op '+role+'.app')
@@ -121,14 +126,24 @@ def main():
                     public=match.group();break
                 time.sleep(.5)
             if not public:raise RuntimeError('Temporary tunnel did not register')
-            # Wait for public DNS and trusted TLS before native clients start.
-            deadline=time.monotonic()+60
-            while True:
-                probe=subprocess.run(['curl','--silent','--show-error','--fail','--max-time','8',public+'/health'],capture_output=True,text=True)
-                if probe.returncode==0 and json.loads(probe.stdout).get('ok'):break
-                if time.monotonic()>=deadline:raise RuntimeError('Temporary public DNS/TLS endpoint did not become ready')
-                time.sleep(2)
+            # Registration can precede public DNS by over a minute. Verify the
+            # actual trusted WSS route, without authenticating or mutating state.
+            deadline=time.monotonic()+180
             url=public.replace('https://','wss://')+'/game'
+            probe_code='''import asyncio,sys
+from websockets.asyncio.client import connect
+async def probe():
+    async with connect(sys.argv[1],ping_interval=None,open_timeout=8,close_timeout=2): pass
+asyncio.run(probe())
+'''
+            while True:
+                probe=subprocess.run([str(s.REPO/'server/.venv/bin/python'),'-c',probe_code,url],capture_output=True,text=True,timeout=20)
+                (root/'logs/network-probe.log').write_text(probe.stdout+probe.stderr)
+                if probe.returncode==0:break
+                if time.monotonic()>=deadline:
+                    detail=probe.stderr.strip().splitlines()[-1] if probe.stderr.strip() else 'Unknown handshake failure'
+                    raise RuntimeError('Temporary public WSS endpoint did not become ready: '+detail)
+                time.sleep(2)
             print('Temporary public WSS tunnel ready; using isolated test database.',flush=True)
         token=(data/'host-token').read_text().strip()
         def launch(role,secret):
