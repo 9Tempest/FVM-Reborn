@@ -59,7 +59,28 @@ Requires the same installed runtime and signed-in account as `tools/macos/build.
 
 Verified on macOS 14.5 / Apple Silicon / runtime 2026.0.0.23: 25 native assertions passed, including `Other_68`, `/game` plus query, Chinese and emoji, approximately 15 KiB messages, text frame format, malformed JSON/binary rejection, connection timeout, server-close detection by activity timeout, reconnect, and explicit cleanup.
 
-**WSS over a trusted TLS connection has not yet been exercised.** Only WSS URL parsing is covered by the local run. To exercise TLS later, forward a trusted WSS endpoint to a chosen local echo port and run the harness with `--echo-port PORT --url 'wss://host/game?transport_test=1'`; its result separately records whether a trusted TLS endpoint was tested successfully.
+Trusted public WSS was also verified with the native runner and the actual `CoopSession`: **10/10 assertions passed** against a Cloudflare HTTPS tunnel. This checked TLS handshakes, standard JSON text, unauthenticated-request rejection, invalid-token rejection, stopped retries, and preservation of solo state. The test creates no room and uses no valid credential. Cloudflare Quick Tunnel addresses change after service restarts, so pass the currently running endpoint:
+
+```sh
+python3 tools/macos/test-coop-wss.py --url 'wss://current-host/game'
+```
+
+For the complete echo suite over TLS, forward a trusted WSS endpoint to a chosen local echo port and use `test-coop-transport.py --echo-port PORT --url 'wss://host/game?transport_test=1'`. The full echo suite has been exercised on local WS; the separate public WSS suite covers TLS and authentication rejection without modifying production game data.
+
+## Real server and session tests
+
+```sh
+python3 -m venv "$HOME/Library/Caches/FVM-Reborn/coop-server-test-venv"
+"$HOME/Library/Caches/FVM-Reborn/coop-server-test-venv/bin/python" -m pip install -r server/requirements.txt
+"$HOME/Library/Caches/FVM-Reborn/coop-server-test-venv/bin/python" tools/macos/test-coop-server.py
+"$HOME/Library/Caches/FVM-Reborn/coop-server-test-venv/bin/python" tools/macos/test-coop-session.py
+```
+
+The real-server test runs two native transport sockets against an immutable copy of the repository's Python server, a loopback listener, a disposable host token, and a separate SQLite database. It passed **28/28 assertions** for host/guest admission, input sequence handling and deduplication, checkpoints, result commits and retries, and guest resume. The post-run SQLite checks verify that retries created only one input and one result, both synthetic profiles received the reward once, and the checkpoint was durable.
+
+The session test compiles the actual `CoopSession` and `CoopTransport`. It passed **54/54 assertions** covering method binding, native file round trips, durable campaign/result outboxes, disk-write failure, restart recovery without progress rollback, ACKs arriving after newer local changes, separate solo progress, guest checkpoints and campaign updates, address-only reconnect codes, lost start ACK recovery, and a complete live host/guest protocol exchange followed by SQLite verification. Save validation, UI, and battle callbacks are small fixture stubs. Only the temporary test source receives deterministic disk-failure and clipboard seams; the user's clipboard, installed app, real credentials, and real saves are untouched. This verifies networking/session behavior, not rendered battle gameplay.
+
+Each run retains source hashes, logs, compiled test app, and JSON results in its own cache directory and uses a new dedicated test bundle identifier. The loopback server fixtures run against synthetic data; the public WSS fixture sends only requests that must be rejected before room membership.
 
 ## API references
 
