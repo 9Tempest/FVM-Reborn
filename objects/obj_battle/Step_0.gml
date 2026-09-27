@@ -1,8 +1,9 @@
+if (coop_battle_active() && !coop_battle_host()) exit;
 if global.is_paused{
 	exit
 }
 
-if global.lose_focus_pause{
+if global.lose_focus_pause && !coop_battle_active(){
 	if !window_has_focus() && !global.is_paused{
 		global.is_paused = true
 	}
@@ -10,7 +11,7 @@ if global.lose_focus_pause{
 
 battle_time ++
 // obj_controller STEP 事件
-if global.debug{
+if global.debug && !coop_battle_active(){
 	if keyboard_check_pressed(ord("M")){
 		var grid_pos = get_grid_position_from_world(mouse_x,mouse_y)
 		var inst = instance_create_depth(grid_pos.x,grid_pos.y+38,0,obj_sawblade_mouse)
@@ -112,7 +113,7 @@ if time_limit > 0{
 }
 
 
-if keyboard_check_pressed(vk_shift) || keyboard_check_pressed(vk_lshift){
+if !coop_battle_active() && (keyboard_check_pressed(vk_shift) || keyboard_check_pressed(vk_lshift)){
 	speed_up = not speed_up
 	if speed_up{
 		game_set_speed(120,gamespeed_fps)
@@ -191,7 +192,7 @@ if wave_timer <= 0 && level_stage == "boss"{
 	}
 }
 
-if global.debug{
+if global.debug && !coop_battle_active(){
 	if keyboard_check_pressed(ord("V")){
 		if level_stage == "ready"{
 			battle_time = (global.level_file.first_wave_delay * 60)

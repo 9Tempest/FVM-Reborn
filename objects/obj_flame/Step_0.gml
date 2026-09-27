@@ -57,7 +57,8 @@ if !is_capture{
 	if (!is_collected) {
 	    var mx = mouse_x;
 	    var my = mouse_y;
-	    var mouse_over = point_distance(x, y, mx, my) < collision_radius;
+	    var mouse_over = !coop_battle_active() && point_distance(x, y, mx, my) < collision_radius;
+		if (coop_battle_active() && is_landed) will_auto_collect = true;
     
 	    if (mouse_over || will_auto_collect) {
 	        is_collected = true;

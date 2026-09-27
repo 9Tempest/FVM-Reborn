@@ -330,3 +330,5 @@ function enemy_subwave_summon(){
     }
     
 }
+
+coop_battle_begin();

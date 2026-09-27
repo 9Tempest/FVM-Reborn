@@ -16,7 +16,7 @@ function can_place_at_position(x, y, plant_type,feature_type,target_card) {
         return false;
     }
 	//调试相关
-	if global.debug{
+	if global.debug && !coop_battle_active(){
 		return true
 	}
 	// 检查是否有障碍

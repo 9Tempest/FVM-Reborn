@@ -1,0 +1,10 @@
+{
+  "$GMScript":"v1",
+  "%Name":"CoopBattle",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"CoopBattle",
+  "parent":{"name":"Util","path":"folders/Util.yy"},
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0"
+}

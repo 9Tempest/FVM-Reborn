@@ -50,7 +50,26 @@ function select_slot(){
 }
 
 //尝试放置逻辑
-function try_place_once(){
+function try_place_once(_world_x = mouse_x, _world_y = mouse_y, _ordered = false){
+	if (coop_battle_active() && !_ordered) {
+		var _cell = coop_grid_from_world(_world_x, _world_y);
+		if (_cell.col < 0 || _cell.row < 0) return false;
+		global.coop.send_input("place_card", {row:_cell.row, col:_cell.col, slot_index:slot_index, card_id:card_id});
+		return true;
+	}
+	if (global.game_over || global.is_paused || cooldown_timer < cooldown) return false;
+	if (!info_got) event_user(0);
+	// Refresh dynamic cost when two ordered placements arrive in the same frame.
+	if (card_id != "magic_chicken") {
+		current_cost = cost;
+		if (ds_map_exists(global.plus_card_map, card_id)) {
+			var _plus = global.plus_card_map[? card_id];
+			with (_plus[0]) if (shape < _plus[1]) other.current_cost += 50;
+		}
+	} else {
+		event_perform(ev_step, ev_step_end);
+	}
+
 	// 检查是否在可种植区域
 		
 		var card_shape = get_card_info_simple(card_id).shape
@@ -67,15 +86,15 @@ function try_place_once(){
         var platform_shift_y = 0;
         var logical_col = -1;
         var logical_row = -1;
-        var grid_pos_visual = get_grid_position_from_world(mouse_x, mouse_y);
+        var grid_pos_visual = get_grid_position_from_world(_world_x, _world_y);
         var direct_in_platform = false;
 
         with (obj_platform) {
             var is_axis_x = (variable_instance_exists(id, "move_axis") && move_axis == "x");
             var shift_x = is_axis_x ? visual_x_shift : 0;
             var shift_y = (!is_axis_x) ? visual_y_shift : 0;
-            var adj_x = mouse_x - shift_x;
-            var adj_y = mouse_y - shift_y;
+            var adj_x = _world_x - shift_x;
+            var adj_y = _world_y - shift_y;
             var grid_pos_adj = get_grid_position_from_world(adj_x, adj_y);
 
             var c_off = is_axis_x ? current_offset : 0;
@@ -112,6 +131,7 @@ function try_place_once(){
             }
         }
         
+        if (logical_col < 0 || logical_col >= global.grid_cols || logical_row < 0 || logical_row >= global.grid_rows) return false;
         var logical_world = get_world_position_from_grid(logical_col, logical_row);
 
         var can_plant = (can_place_at_position(logical_world.x, logical_world.y, card_data[? "plant_type"],card_data[? "feature_type"],card_data[? "target_card"]));
@@ -156,6 +176,7 @@ function try_place_once(){
 			var depth_value = calculate_plant_depth(logical_col, logical_row, new_plant.plant_type);
 			card_created(new_plant, logical_col, logical_row);
 			new_plant.depth = depth_value
+			if (found_plat != noone && variable_instance_exists(found_plat, "state") && found_plat.state == "moving") new_plant.platform_grid_lock = true;
 			if global.grid_terrains[logical_row][logical_col].type == "normal"{
 				instance_create_depth(logical_world.x + platform_shift_x, logical_world.y + platform_shift_y,-2,obj_place_effect)
 			}
@@ -187,7 +208,8 @@ function try_place_once(){
                 instance_destroy(selected_preview);
             }
             selected_preview = noone;
-            global.selected_slot = noone;
+            if (global.selected_slot == id) global.selected_slot = noone;
+			return true;
         }
 		else if global.quick_placement{
 			// 取消选择
@@ -196,6 +218,7 @@ function try_place_once(){
                 instance_destroy(selected_preview);
             }
             selected_preview = noone;
-            global.selected_slot = noone;
+            if (global.selected_slot == id) global.selected_slot = noone;
 		}
+	return false;
 }

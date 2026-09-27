@@ -1,3 +1,4 @@
+if (coop_battle_active() && !is_placed && coop_owner != global.coop.player_id) exit;
 if not is_placed{
 	var can_plant = (can_place_at_position(mouse_x, mouse_y, "normal","amphi","none"));
 	if can_plant{
@@ -18,4 +19,14 @@ else{
 	image_blend = c_white
 	draw_self()
 	
+}
+if (coop_battle_active() && is_placed) {
+	draw_set_font(font_yuan);
+	draw_set_halign(fa_center);
+	draw_set_valign(fa_bottom);
+	draw_set_colour(coop_owner == global.coop.player_id ? c_aqua : c_yellow);
+	draw_text(x, y - 125, coop_owner == global.coop.player_id ? "你" : "队友");
+	draw_set_colour(c_white);
+	draw_set_halign(fa_left);
+	draw_set_valign(fa_top);
 }

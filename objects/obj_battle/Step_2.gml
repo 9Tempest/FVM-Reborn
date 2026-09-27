@@ -1,3 +1,4 @@
+if (coop_battle_active() && !coop_battle_host()) exit;
 for (var _i = 0; _i < array_length(global._move_instance_pre_arr); _i++) {
     var _inst = global._move_instance_pre_arr[_i];
     with (_inst) {
