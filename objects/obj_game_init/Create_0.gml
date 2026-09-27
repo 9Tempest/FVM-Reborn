@@ -109,7 +109,7 @@ if (!file_exists("config.ini")) {
 	ini_write_bool("settings", "card_hpbar", false);
 	ini_write_bool("settings", "enemy_hpbar", false);
 	ini_write_bool("settings", "tex_fliter", true);
-	ini_write_real("settings", "difficulty", 1)
+	ini_write_real("settings", "difficulty", 3) // 星际级；已有配置保留玩家选择
 	ini_write_bool("settings", "borderless_window", true);
 	ini_write_real("settings", "save_slot", 0)
 	ini_write_bool("settings", "lose_focus_pause", true)
@@ -136,7 +136,7 @@ global.replace_placement = ini_read_bool("settings", "replace_placement", false)
 global.card_hpbar = ini_read_bool("settings", "card_hpbar", false);
 global.enemy_hpbar = ini_read_bool("settings", "enemy_hpbar", false);
 global.tex_fliter = ini_read_bool("settings", "tex_fliter", true);
-global.difficulty = ini_read_real("settings", "difficulty", 1)
+global.difficulty = ini_read_real("settings", "difficulty", 3)
 global.borderless_window = ini_read_bool("settings", "borderless_window", true);
 global.save_slot = ini_read_real("settings", "save_slot", 0)
 global.lose_focus_pause = ini_read_bool("settings", "lose_focus_pause", true);
