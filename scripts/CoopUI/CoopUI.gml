@@ -115,8 +115,10 @@ function coop_guest_step() {
         if (keyboard_check_pressed(vk_left)) coop_reward_page=max(0,coop_reward_page-1);
         return;
     }
-    if (keyboard_check_pressed(vk_space) || keyboard_check_pressed(vk_escape)) _c.send_input("pause_vote",{paused:!coop_pause_vote});
-    if (keyboard_check_pressed(vk_space) || keyboard_check_pressed(vk_escape)) coop_pause_vote=!coop_pause_vote;
+    if (keyboard_check_pressed(vk_space) || keyboard_check_pressed(vk_escape)) {
+        coop_pause_vote=!coop_get(coop_get(_s,"pause_votes",{}),_c.player_id,coop_pause_vote);
+        _c.send_input("pause_vote",{paused:coop_pause_vote});
+    }
     if (mouse_check_button_pressed(mb_right)) { _c.selected_slot=-1; _c.selected_gem=-1; _c.shovel_selected=false; }
     var _slots=coop_get(_s,"slots",[]);
     for (var _i=0;_i<array_length(_slots);_i++) {
@@ -128,7 +130,7 @@ function coop_guest_step() {
     if (coop_ui_hit(1650,30,220,75)) { _c.shovel_selected=true; _c.selected_slot=-1; _c.selected_gem=-1; return; }
     var _gems=coop_get(_s,"gems",[]);
     for (var _i=0;_i<array_length(_gems);_i++) {
-        if (coop_get(_gems[_i],"active",true) && coop_ui_hit(25,230+_i*85,180,72)) { _c.selected_gem=_i; _c.shovel_selected=false; _c.selected_slot=-1; return; }
+        if (coop_get(_gems[_i],"active",true) && coop_get(_gems[_i],"remaining_cd",0)<=0 && coop_ui_hit(25,230+_i*85,180,72)) { _c.selected_gem=_i; _c.shovel_selected=false; _c.selected_slot=-1; return; }
     }
     if (!mouse_check_button_pressed(mb_left)) return;
     var _g=coop_get(_s,"grid",{});
@@ -216,7 +218,14 @@ function coop_guest_draw() {
     }
     coop_ui_button(1650,30,220,75,_c.shovel_selected ? "铲子 · 已选择" : "铲子");
     var _gems=coop_get(_s,"gems",[]);
-    for (var _i=0;_i<array_length(_gems);_i++) coop_ui_button(25,230+_i*85,180,72,coop_get(_gems[_i],"name",_gems[_i].gem_id),coop_get(_gems[_i],"active",true));
+    for (var _i=0;_i<array_length(_gems);_i++) {
+        var _gem=_gems[_i],_name=coop_get(_gem,"name",get_gem_info(_gem.gem_id).name);
+        var _enabled=coop_get(_gem,"active",true) && coop_get(_gem,"remaining_cd",0)<=0;
+        if (!coop_get(_gem,"active",true)) _name+=" · 自动";
+        else if (_gem.remaining_cd>0) _name+=" "+string(ceil(_gem.remaining_cd/60))+"秒";
+        else if (_c.selected_gem==_i) _name+=" · 已选择";
+        coop_ui_button(25,230+_i*85,180,72,_name,_enabled);
+    }
     var _players=coop_get(_s,"players",[]);
     for (var _i=0;_i<array_length(_players);_i++) {
         if (_players[_i].player_id==_c.player_id && !_players[_i].placed) {
@@ -237,7 +246,11 @@ function coop_guest_draw() {
     var _hint=_c.all_connected() ? "数字键选卡 · 点击网格放置 · 右键取消 · 空格暂停" : "网络中断，战斗已暂停，正在等待重连";
     coop_ui_text(30,1010,_hint,0.8,c_white,fa_left,1820);
     coop_ui_text(30,1047,_c.status,0.65,make_colour_rgb(160,217,209),fa_left,1800);
-    if (coop_get(_s,"paused",false)) coop_ui_text(960,205,"已暂停 · 两位玩家放置角色后开始",1,c_yellow,fa_center,1500);
+    if (coop_get(_s,"paused",false)) {
+        var _placed=true;
+        for (var _i=0;_i<array_length(_players);_i++) if (!_players[_i].placed) _placed=false;
+        coop_ui_text(960,205,_placed ? "队伍已暂停 · 空格解除自己的暂停请求" : "两位玩家放置角色后开始",1,c_yellow,fa_center,1500);
+    }
     if (coop_get(_s,"game_over",false)) coop_guest_rewards();
     draw_set_alpha(1); draw_set_halign(fa_left); draw_set_valign(fa_top); draw_set_colour(c_white);
 }
