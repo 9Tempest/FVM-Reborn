@@ -33,7 +33,7 @@ function bridge_packet(_owner, _action, _payload) {
 function bridge_run() {
     global.bridge_tests = []; global.bridge_seqs = {}; global.bridge_placed = 0;
     global.bridge_shovels = 0; global.bridge_gems = 0; global.bridge_gem_owner = "";
-    global.bridge_starts = 0; global.bridge_snapshots = 0; global.bridge_results = 0;
+    global.bridge_starts = 0; global.bridge_snapshots = 0; global.bridge_results = 0; global.bridge_wire = [];
     global.game_over = false; global.flame = 300;
     global.grid_offset_x = 100; global.grid_offset_y = 100;
     global.grid_cell_size_x = 100; global.grid_cell_size_y = 100;
@@ -43,8 +43,8 @@ function bridge_run() {
         players:[{player_id:"host",connected:true},{player_id:"guest",connected:true}],
         all_connected:function(){return connected && players[0].connected && players[1].connected;},
         start_battle:function(_level){global.bridge_starts++; return global.bridge_starts > 1;},
-        send_snapshot:function(_state){global.bridge_snapshots++; global.bridge_last_snapshot = _state;},
-        submit_result:function(_outcome){global.bridge_results++; global.bridge_last_result = _outcome;}
+        send_snapshot:function(_state){global.bridge_snapshots++; global.bridge_last_snapshot = _state; array_push(global.bridge_wire,"snapshot");},
+        submit_result:function(_outcome){global.bridge_results++; global.bridge_last_result = _outcome; array_push(global.bridge_wire,"result");}
     };
     var _battle = instance_create_depth(0,0,0,obj_battle);
     _battle.map_spr_index = 0; _battle.battle_time = 60; _battle.time_limit = 18000; _battle.current_wave = 1; _battle.total_wave = 5;
@@ -173,9 +173,17 @@ function bridge_run() {
     _ui.rewards_committed = false; _ui.victory_started = false;
     global.game_over = true; coop_battle_tick();
     bridge_expect("victory cannot submit before reward commit", global.bridge_results == 0);
+    global.bridge_wire = []; global.coop_battle.last_snapshot = current_time;
     _ui.rewards_committed = true; _ui.victory_started = true; _ui.victory_resources = []; _ui.victory_unlocks = []; _ui.victory_milestones = []; _ui.first_complete = true;
     coop_battle_tick(); coop_battle_tick();
     bridge_expect("completed victory submits exactly once", global.bridge_results == 1 && global.bridge_last_result == "victory" && variable_struct_exists(global.bridge_last_snapshot,"victory"));
+    bridge_expect("final victory snapshot precedes the result even between periodic frames",array_length(global.bridge_wire)==2 && global.bridge_wire[0]=="snapshot" && global.bridge_wire[1]=="result");
+    var _final_snapshots=global.bridge_snapshots;
+    for(var _i=0;_i<3;_i++) {
+        global.coop_battle.last_snapshot=-1000;
+        coop_battle_tick();
+    }
+    bridge_expect("submitted battle sends no further periodic snapshots",global.bridge_snapshots==_final_snapshots && global.bridge_results==1 && array_length(global.bridge_wire)==2);
     global.coop.role = "guest";
     bridge_expect("guest cannot run host command executor", !coop_battle_command(bridge_packet("guest","place_player",{row:3,col:0})));
     var _passed = 0; for (var _i=0; _i<array_length(global.bridge_tests); _i++) if (global.bridge_tests[_i].passed) _passed++;

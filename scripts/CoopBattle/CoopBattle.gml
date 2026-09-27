@@ -391,7 +391,7 @@ function coop_battle_tick() {
     }
     global.is_paused = !coop_battle_can_run();
     if (!global.coop.battle_started) return;
-    if (current_time - global.coop_battle.last_snapshot >= 100) {
+    if (!global.coop_battle.result_sent && current_time - global.coop_battle.last_snapshot >= 100) {
         global.coop_battle.last_snapshot = current_time;
         global.coop.send_snapshot(coop_battle_snapshot());
     }
