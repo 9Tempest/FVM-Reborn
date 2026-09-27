@@ -26,6 +26,10 @@ ENTITLEMENTS = {
     "com.apple.security.network.client": True,
     "com.apple.security.files.user-selected.read-write": True,
 }
+RUNNER_ENTITLEMENTS = {
+    "com.apple.security.app-sandbox": True,
+    "com.apple.security.inherit": True,
+}
 
 
 def run(*args):
@@ -95,6 +99,20 @@ def make_icon(source, destination, temporary):
     run("/usr/bin/iconutil", "-c", "icns", "-o", destination, iconset)
 
 
+def build_launcher(destination, temporary):
+    source = Path(__file__).with_name("launcher.mm")
+    require(source.is_file(), "The macOS launcher source is missing.")
+    architectures = []
+    for architecture in ("arm64", "x86_64"):
+        executable = temporary / ("launcher." + architecture)
+        run("/usr/bin/xcrun", "clang++", "-std=c++17", "-fobjc-arc", "-O2",
+            "-Wall", "-Wextra", "-Werror", "-mmacosx-version-min=13.0",
+            "-arch", architecture, "-framework", "Foundation", source, "-o", executable)
+        architectures.append(executable)
+    run("/usr/bin/lipo", "-create", *architectures, "-output", destination)
+    destination.chmod(0o755)
+
+
 def assemble(args):
     require(sys.platform == "darwin", "Local macOS packaging must run on macOS.")
     output = args.output.expanduser().absolute()
@@ -141,6 +159,7 @@ def assemble(args):
             "CFBundleIdentifier": options["appid"],
             "CFBundleDisplayName": options.get("displayname", "FVM Reborn"),
             "CFBundleName": "FVM Reborn",
+            "CFBundleExecutable": "FVM_Launcher",
             "CFBundleShortVersionString": version,
             "CFBundleVersion": version,
             "CFBundleIconFile": "icon.icns",
@@ -155,10 +174,22 @@ def assemble(args):
         entitlements = temporary / "local.entitlements.plist"
         with entitlements.open("wb") as stream:
             plistlib.dump(ENTITLEMENTS, stream)
+        runner_entitlements = temporary / "runner.entitlements.plist"
+        with runner_entitlements.open("wb") as stream:
+            plistlib.dump(RUNNER_ENTITLEMENTS, stream)
+        build_launcher(contents / "MacOS/FVM_Launcher", temporary)
         # Standard inside-out signing: libraries carry no app entitlements.
         for library in sorted(contents.rglob("*.dylib")):
             run("/usr/bin/codesign", "--force", "--sign", "-", library)
-        run("/usr/bin/lipo", contents / "MacOS/libFvmNativeSupport.dylib", "-verify_arch", "arm64", "x86_64")
+        # The embedded runner inherits the launcher's original sandbox instead
+        # of initializing a second sandbox/container after execv. Apple requires
+        # exactly app-sandbox + inherit on an embedded sandboxed helper.
+        run("/usr/bin/codesign", "--force", "--sign", "-",
+            "--identifier", options["appid"] + ".runner", "--entitlements",
+            runner_entitlements, contents / "MacOS/Mac_Runner")
+        for executable in (contents / "MacOS/FVM_Launcher", contents / "MacOS/Mac_Runner",
+                           contents / "MacOS/libFvmNativeSupport.dylib"):
+            run("/usr/bin/lipo", executable, "-verify_arch", "arm64", "x86_64")
         run("/usr/bin/codesign", "--force", "--sign", "-", "--entitlements", entitlements, app)
         run("/usr/bin/codesign", "--verify", "--deep", "--strict", app)
         staged_zip = temporary / "package.zip"

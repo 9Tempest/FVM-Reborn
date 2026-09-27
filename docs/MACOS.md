@@ -101,7 +101,11 @@ python3 FvmNativeSupport/macos/test_native.py
 
 也可单独对已编译的 VM `game.zip` 运行 `python3 tools/macos/package-local.py --output /new/path/FVM\ Reborn.app`。该脚本支持 `--game-zip`、`--runtime`、`--icon` 和 `--zip`，并读取 `FVM_MACOS_BUILD_DIR` / `FVM_GAMEMAKER_RUNTIME`。它不能修复编译错误。
 
-脚本每次从官方 runner 复制新应用，将已编译资源放入 `Contents/Resources`、原生库放入 `Contents/MacOS`，从仓库的 PNG 用 macOS `sips` / `iconutil` 生成图标，并写入归档中的应用标识和版本。它按由内至外的顺序签名动态库与应用，最后执行严格签名校验。现有 `.app` 或 ZIP 不会被覆盖；需要重新打包时选择新的输出路径。
+脚本每次从官方 runner 复制新应用，将已编译资源放入 `Contents/Resources`、原生库放入 `Contents/MacOS`，从仓库的 PNG 用 macOS `sips` / `iconutil` 生成图标，并写入归档中的应用标识和版本。它还使用 Command Line Tools 编译 arm64/x86_64 通用启动器 `FVM_Launcher`，按由内至外的顺序签名动态库、内层运行器与应用，最后执行严格签名校验。现有 `.app` 或 ZIP 不会被覆盖；需要重新打包时选择新的输出路径。
+
+启动器解决 runtime 2026.0.0.23 在下载隔离路径中的启动崩溃：App Translocation 可让 `NSBundle` 返回 `/private/var/...`，而运行器检查资源时会把已存在路径规范化为 `/var/...`。前缀比较不一致会使它找不到包内 `options.ini`，随后在加载游戏前解引用空指针。启动器用相同的 Foundation 规则规范化包内 `game.ios` 路径，通过官方 `-game` 参数启动未修改的 `Mac_Runner`，保留原参数。此修复不移除下载隔离标记或更改系统安全设置。
+
+应用入口为 `Contents/MacOS/FVM_Launcher`，测试和命令行启动也应使用它。内层 `Mac_Runner` 仅带 `app-sandbox` 与 `inherit`，按 [Apple 沙盒辅助进程规则](https://developer.apple.com/documentation/xcode/embedding-a-helper-tool-in-a-sandboxed-app) 继承应用原有权限和容器；启动器不修改 bundle ID、HOME 或存档位置。只验证内层运行器能直接运行，不能代替下载 ZIP 后通过正常应用入口启动的验收。
 
 本地应用使用标准 ad-hoc 签名，保留 App Sandbox、向外访问网络，以及通过系统文件选择框获得用户选定文件的读写权限。它不会填入空的团队/应用授权标识，不访问钥匙串，不修改 Gatekeeper、SIP 或系统隐私设置。应用可复制到自己的 `~/Applications` 后双击启动；脚本不会启动游戏。
 
