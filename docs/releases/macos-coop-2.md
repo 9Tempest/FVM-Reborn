@@ -12,7 +12,7 @@ macOS 13+；包含 Apple Silicon / Intel 通用二进制。Apple Silicon 已实�
 
 **更新已有安装：** 请先正常退出旧版，再替换并打开新版。macOS 14+ 可能因新版临时签名变化，再次请求访问原有游戏数据；核对应用及来源后，通过系统提示决定是否允许。等待授权期间可能尚未出现游戏窗口，拒绝授权可能使这次启动失败。原应用标识与存档目录保持不变；不要删除旧存档容器、修改容器元数据或关闭 Gatekeeper。这个数据访问提示与开发者验证提示相互独立，详见 [Apple 沙盒说明](https://developer.apple.com/documentation/security/accessing-files-from-the-macos-app-sandbox)。
 
-启动修复的隔离路径回归 22/22 通过；本候选从下载链接安装、正常打开及旧容器系统授权的人工验收仍待完成，不能以命令行测试替代。
+启动修复的隔离路径回归 22/22 通过。已从 GitHub 实际下载本页 ZIP，核验 SHA-256、严格签名和四个核心二进制，完成解压安装并通过正常应用入口启动。用户完成系统容器授权后，系统日志确认启动及沙盒初始化成功，随后正常退出（状态 0）；原存档进度保留并再次成功写入。自动化界面工具超时，本次安装未取得画面截图核验；两台实际异地 Mac 的人工合作验收与全部关卡仍待验证。
 
 [合作安装与操作指南](https://github.com/9Tempest/FVM-Reborn/blob/v2.4.1-macos-coop.2/docs/COOP_MAC.md) · [原生构建说明](https://github.com/9Tempest/FVM-Reborn/blob/v2.4.1-macos-coop.2/docs/MACOS.md)
 
