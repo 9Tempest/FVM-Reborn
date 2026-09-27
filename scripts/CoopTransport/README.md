@@ -78,9 +78,27 @@ python3 -m venv "$HOME/Library/Caches/FVM-Reborn/coop-server-test-venv"
 
 The real-server test runs two native transport sockets against an immutable copy of the repository's Python server, a loopback listener, a disposable host token, and a separate SQLite database. It passed **28/28 assertions** for host/guest admission, input sequence handling and deduplication, checkpoints, result commits and retries, and guest resume. The post-run SQLite checks verify that retries created only one input and one result, both synthetic profiles received the reward once, and the checkpoint was durable.
 
-The session test compiles the actual `CoopSession` and `CoopTransport`. It passed **54/54 assertions** covering method binding, native file round trips, durable campaign/result outboxes, disk-write failure, restart recovery without progress rollback, ACKs arriving after newer local changes, separate solo progress, guest checkpoints and campaign updates, address-only reconnect codes, lost start ACK recovery, and a complete live host/guest protocol exchange followed by SQLite verification. Save validation, UI, and battle callbacks are small fixture stubs. Only the temporary test source receives deterministic disk-failure and clipboard seams; the user's clipboard, installed app, real credentials, and real saves are untouched. This verifies networking/session behavior, not rendered battle gameplay.
+The session test compiles the actual `CoopSession` and `CoopTransport`. It passed **59/59 assertions** covering method binding, native file round trips, durable campaign/result outboxes, disk-write failure, restart recovery without progress rollback, ACKs arriving after newer local changes, separate solo progress, guest checkpoints and campaign updates, address-only reconnect codes, lost start ACK recovery, synchronous DNS/send failures with a single scheduled retry, and a complete live host/guest protocol exchange followed by SQLite verification. Save validation, UI, and battle callbacks are small fixture stubs. Only the temporary test source receives deterministic disk-failure and clipboard seams; the user's clipboard, installed app, real credentials, and real saves are untouched. This verifies networking/session behavior, not rendered battle gameplay.
 
 Each run retains source hashes, logs, compiled test app, and JSON results in its own cache directory and uses a new dedicated test bundle identifier. The loopback server fixtures run against synthetic data; the public WSS fixture sends only requests that must be rejected before room membership.
+
+## Native keepalive compatibility
+
+On macOS 14.5 with runtime 2026.0.0.23, the native runner responds to RFC WebSocket control PING with an incorrectly masked control frame. Python `websockets` then rejects it with close code **1002, `incorrect masking`**. A 72-second native comparison reproduced the failure for both random binary and ASCII ping payloads at the first 20-second ping; the application-JSON-only connection stayed alive for more than 71 seconds. This is distinct from a keepalive timeout or an application background pause.
+
+The server therefore keeps strict WebSocket frame validation but sets `ping_interval=None`. Authenticated connections must send valid application messages within the server's idle deadline (30 seconds by default); `CoopSession` sends JSON `ping` every five seconds and detects missing server responses after 15 seconds. Disabling control PING is a compatibility workaround, not permission to accept unmasked client frames.
+
+A separate native stress fixture passed **20/20 assertions** with simultaneous local WS and public trusted WSS connections. It sent both 100 KiB and 1 MiB JSON payloads in both directions and held JSON heartbeats for at least 65 seconds within a 75-second test run. These sizes test transport framing; they do not change the production protocol's smaller profile/state/message limits.
+
+```sh
+"$HOME/Library/Caches/FVM-Reborn/coop-server-test-venv/bin/python" tools/macos/test-coop-long.py
+
+# Optional: use an installed official cloudflared to test the same fixture over WSS.
+"$HOME/Library/Caches/FVM-Reborn/coop-server-test-venv/bin/python" tools/macos/test-coop-long.py \
+  --cloudflared /absolute/path/to/cloudflared
+```
+
+The optional argument creates a temporary public tunnel to a test-only loopback service. It serves only synthetic messages, has no game database or file endpoint, and shuts down after the run. New Quick Tunnel domains may take time to resolve; the fixture waits for actual DNS and trusted TLS readiness before starting the native test timer. It does not change DNS settings, certificate checks, or the production tunnel.
 
 ## API references
 
