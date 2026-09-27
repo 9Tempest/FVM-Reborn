@@ -756,6 +756,43 @@ class Streaming(unittest.IsolatedAsyncioTestCase):
         finally:
             release.set()
 
+    async def test_direct_defeat_discards_snapshot_waiting_behind_slow_guest(self):
+        host, guest, created, joined = await self.room()
+        match = await self.start_match(host, guest)
+        connection = self.app.clients[(created["room_id"], joined["player_id"])]
+        original = connection.socket.send
+        blocked, release = asyncio.Event(), asyncio.Event()
+        sent = []
+        async def slow_snapshot(payload):
+            message = json.loads(payload)
+            if message["type"] == "snapshot" and message["tick"] == 1:
+                blocked.set()
+                await release.wait()
+            await original(payload)
+            sent.append((message["type"], message.get("tick")))
+        connection.socket.send = slow_snapshot
+        try:
+            fields = dict(match_id=match["match_id"], applied_command_id=0)
+            await host.rpc("snapshot", tick=1, state={"game_over": False}, **fields)
+            await asyncio.wait_for(blocked.wait(), 1)
+            await host.rpc("snapshot", tick=2, state={"game_over": False}, **fields)
+            self.assertEqual(connection.pending_visual["tick"], 2)
+            writer = connection.visual_task
+            # Leaving a battle submits defeat directly, without a terminal frame.
+            profiles = {created["player_id"]: profile(), joined["player_id"]: profile()}
+            result = await host.rpc("match_result", match_id=match["match_id"],
+                                    result={"outcome": "defeat"}, profiles=profiles)
+            self.assertTrue(result["committed"])
+            self.assertEqual(self.store.room(created["room_id"])["status"], "finished")
+            release.set()
+            self.assertEqual((await guest.event("snapshot"))["tick"], 1)
+            self.assertEqual((await guest.event("match_finished"))["result"]["outcome"], "defeat")
+            await asyncio.wait_for(writer, 1)
+            self.assertIsNone(connection.pending_visual)
+            self.assertEqual(sent, [("snapshot", 1), ("match_finished", None)])
+        finally:
+            release.set()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

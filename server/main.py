@@ -86,7 +86,7 @@ class GameServer:
     async def send_message(self, client, message):
         # All sends share one lock so the final battle frame and later reliable
         # state transitions cannot be overtaken by a queued older visual frame.
-        if message.get("type") in ("loadout_state", "match_started", "snapshot"):
+        if message.get("type") in ("loadout_state", "match_started", "match_finished", "snapshot"):
             client.pending_visual = None
         async with client.send_lock:
             await asyncio.wait_for(client.socket.send(encode({"v": VERSION, **message})), 3)
@@ -100,8 +100,10 @@ class GameServer:
                         continue
                     if message["type"] == "screen_frame" and not self.screen_allowed(client.room_id):
                         continue
-                    if message["type"] == "snapshot" and self.store.room(client.room_id)["match_id"] != message["match_id"]:
-                        continue
+                    if message["type"] == "snapshot":
+                        room = self.store.room(client.room_id)
+                        if room["match_id"] != message["match_id"] or room["status"] != "running":
+                            continue
                     await asyncio.wait_for(client.socket.send(encode({"v": VERSION, **message})), 3)
         except asyncio.TimeoutError:
             await client.socket.close(1013, "Client is not receiving game updates")
