@@ -26,6 +26,8 @@ function placement_owned_slot(_owner,_card) {
     return noone;
 }
 function placement_plant_created() {
+    owner_seen_in_create=variable_instance_exists(id,"coop_owner") ? coop_owner : "";
+    copy_seen_in_create=variable_instance_exists(id,"coop_copy_card") ? coop_copy_card : "";
     plant_id=global.spawn_id; plant_type=global.spawn_type; feature_type=global.spawn_feature; shape=0; depth_value=0;
     if (global.placement_nested) {
         global.placement_nested=false;
@@ -132,6 +134,7 @@ function placement_run() {
     global.replace_placement=false;
 
     var _platform=instance_create_depth(0,0,0,obj_platform);
+    placement_expect("legacy four-argument creation still registers moving platforms",global._last_platform==_platform && array_get_index(global._move_instance_pre_arr,_platform)>=0);
     _platform.move_axis="x"; _platform.visual_x_shift=50; _platform.visual_y_shift=0;
     _platform.current_offset=0; _platform.start_col=4; _platform.start_row=2; _platform.width=2; _platform.length=1; _platform.state="moving";
     _slot.cooldown_timer=_slot.cooldown; placement_spawn(_slot);
@@ -169,6 +172,7 @@ function placement_run() {
     placement_expect("initial personal flame includes sixty percent of difficulty bonus",coop_flame_get("host")==300 && coop_flame_get("guest")==300);
     placement_expect("independent deck factory creates only each player's selected cards",instance_number(obj_card_slot)==5 && instance_exists(placement_owned_slot("guest","shield")) && !instance_exists(placement_owned_slot("host","shield")));
     var _host=placement_owned_slot("host","base"); var _guest=placement_owned_slot("guest","base");
+    placement_expect("real creation hook passes slot owner before production Create",_host.fixture_owner_at_create=="host" && _guest.fixture_owner_at_create=="guest");
     global.is_paused=false; global.debug=true;
     placement_step(_guest,2,4,true,true);
     placement_expect("hidden guest slot ignores host mouse and keyboard",!_guest.is_selected && global.selected_slot==noone && !_guest.visible && _host.visible);
@@ -192,7 +196,7 @@ function placement_run() {
     placement_spawn(_host_copy); _world=get_world_position_from_grid(2,4);
     placement_expect("copy card charges only its owner's previous target",_host_copy.try_place_once(_world.x,_world.y,true,"host") && coop_flame_get("host")==165 && coop_flame_get("guest")==215);
     _plant=ds_list_find_value(global.grid_plants[# 2,4],0);
-    placement_expect("copy target reaches nested Create without shared globals",_plant.coop_copy_card=="shield" && _plant.coop_owner=="host" && coop_prev_card_get("guest")=="base");
+    placement_expect("copy target reaches nested Create without shared globals",_plant.copy_seen_in_create=="shield" && _plant.owner_seen_in_create=="host" && _plant.coop_copy_card=="shield" && _plant.coop_owner=="host" && coop_prev_card_get("guest")=="base");
     placement_spawn(_guest_copy); _world=get_world_position_from_grid(3,4);
     placement_expect("guest copy remains independent after host copying",_guest_copy.try_place_once(_world.x,_world.y,true,"guest") && coop_flame_get("guest")==115 && coop_flame_get("host")==165);
     var _ice=instance_create_depth(0,0,0,obj_ice_cream_probe);

@@ -32,7 +32,7 @@ def prepare(root, app_id):
     shutil.rmtree(project / "scripts")
     shutil.rmtree(project / "objects")
     parent = {"name":"Harness", "path":"folders/Harness.yy"}
-    for name in ("CoopBattle", "get_grid_position_from_world", "create_battle_slots"):
+    for name in ("CoopBattle", "get_grid_position_from_world", "create_battle_slots", "src_hook_function"):
         shutil.copytree(REPO / "scripts" / name, project / "scripts" / name)
         path = project / "scripts" / name / (name + ".yy")
         meta = helpers.read_yy(path)

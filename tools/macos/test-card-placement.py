@@ -41,7 +41,7 @@ def prepare(root, app_id):
         helpers.write_yy(path, meta)
         yyp["resources"].append({"id":{"name":meta["name"],"path":str(path.relative_to(project))}})
 
-    for name in ("get_grid_position_from_world", "can_place_at_position", "card_created", "card_destroyed", "card_depth", "CoopBattle", "create_battle_slots"):
+    for name in ("get_grid_position_from_world", "can_place_at_position", "card_created", "card_destroyed", "card_depth", "CoopBattle", "create_battle_slots", "src_hook_function"):
         shutil.copytree(REPO / "scripts" / name, project / "scripts" / name)
         path = project / "scripts" / name / (name + ".yy")
         register(path, helpers.read_yy(path))
@@ -63,6 +63,9 @@ def prepare(root, app_id):
             for event in ("Create_0.gml", "Step_0.gml", "Step_2.gml", "Other_10.gml"):
                 source = (REPO / "objects" / name / event).read_text()
                 hashes["objects/" + name + "/" + event] = hashlib.sha256(source.encode()).hexdigest()
+                if event == "Create_0.gml":
+                    # Observe optional creation fields before the production event.
+                    source = 'fixture_owner_at_create=variable_instance_exists(id,"coop_owner") ? coop_owner : "";\n' + source
                 for builtin in ("mouse_check_button_pressed", "keyboard_check_pressed", "device_mouse_x_to_gui", "device_mouse_y_to_gui", "audio_play_sound"):
                     source = re.sub(r"\b" + builtin + r"\s*\(", "placement_" + builtin + "(", source)
                 source = re.sub(r"\bmouse_x\b", "global.placement_mouse_x", source)

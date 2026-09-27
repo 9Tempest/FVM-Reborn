@@ -2,6 +2,10 @@
 function create_battle_card_slot(_card_id, _shape, _data, _index, _owner = "") {
     var _inst = instance_create_depth(535 + min(_index,14) * 90,
         90 + max(0,_index - 14) * 118, -2000, obj_card_slot, {coop_owner:_owner});
+    // Ownership is factory metadata, just like card_id. Set it explicitly after
+    // Create as well; never let a missing/overwritten creation field become a
+    // shared slot in the complete runtime.
+    _inst.coop_owner = _owner;
     _inst.cost = _data[? "cost"];
     _inst.cooldown = _data[? "cooldown"];
     _inst.card_obj = _data[? "obj"];
