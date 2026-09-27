@@ -45,7 +45,7 @@ def prepare(root, app_id):
     shutil.copyfile(HERE / "coop-battle-fixture.gml", path.with_suffix(".gml"))
     yyp["resources"].append({"id":{"name":name,"path":str(path.relative_to(project))}})
     template = helpers.read_yy(REPO / "objects/obj_battle_pause_manager/obj_battle_pause_manager.yy")
-    for name in ("obj_autosave_tests", "obj_battle", "obj_player_character", "obj_card_slot", "obj_shovel_slot", "obj_platform", "obj_game_over", "obj_card_preview", "obj_battle_pause_manager", "obj_boss_hpbar", "obj_fixture_gem"):
+    for name in ("obj_autosave_tests", "obj_battle", "obj_player_character", "obj_card_slot", "obj_shovel_slot", "obj_platform", "obj_game_over", "obj_card_preview", "obj_battle_pause_manager", "obj_boss_hpbar", "obj_fixture_gem", "obj_flame_manager", "obj_world_map_button", "obj_level_progress_bar", "obj_battle_timer_display", "obj_player_info_ui", "obj_fixture_plant", "obj_fixture_projectile"):
         obj = copy.deepcopy(template)
         obj.update({"%Name":name,"name":name,"parent":parent})
         obj["eventList"] = []

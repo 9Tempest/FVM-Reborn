@@ -166,16 +166,20 @@ function coop_snapshot_sprite(_sprite) {
     return !is_undefined(_sprite) && sprite_exists(_sprite) ? sprite_get_name(_sprite) : "";
 }
 function coop_battle_snapshot() {
+    // Guest HUD is drawn from structured fields. These objects' sprite_index
+    // values do not represent their conditional/custom Draw events.
+    static _ui_objects = [obj_card_slot,obj_shovel_slot,obj_game_over,obj_card_preview,obj_boss_hpbar,
+        obj_flame_manager,obj_world_map_button,obj_level_progress_bar,obj_battle_timer_display,obj_battle_pause_manager,obj_player_info_ui];
     var _state = {background:{sprite:coop_snapshot_sprite(global.level_data.level_sprite),frame:obj_battle.map_spr_index},
         entities:[], slots:[], gems:[], players:[], platforms:[], bosses:[], audio:coop_audio_snapshot(),
         grid:{offset_x:global.grid_offset_x,offset_y:global.grid_offset_y,cell_x:global.grid_cell_size_x,cell_y:global.grid_cell_size_y,cols:global.grid_cols,rows:global.grid_rows},
         flame:global.flame,paused:global.is_paused,pause_votes:global.coop_battle.pause_votes,game_over:global.game_over,outcome:"",level_name:global.level_data.name,
-        battle_time:obj_battle.battle_time,wave:obj_battle.current_wave,total_waves:obj_battle.total_wave,
+        battle_time:obj_battle.battle_time,time_limit:obj_battle.time_limit,wave:obj_battle.current_wave,total_waves:obj_battle.total_wave,
         waiting:!global.coop_battle.ready || !coop_battle_can_run(),connected:global.coop.all_connected(),last_seq:global.coop_battle.last_seq};
     for (var _i = 0; _i < instance_number(all); _i++) {
         var _inst = instance_find(all, _i);
         if (!_inst.visible || !sprite_exists(_inst.sprite_index) || _inst.image_alpha <= 0) continue;
-        if (_inst.object_index == obj_card_slot || _inst.object_index == obj_shovel_slot || _inst.object_index == obj_game_over || _inst.object_index == obj_card_preview || _inst.object_index == obj_boss_hpbar) continue;
+        if (array_get_index(_ui_objects,_inst.object_index) != -1) continue;
         if (variable_instance_exists(_inst,"coop_gem_index")) continue;
         if (_inst.object_index == obj_player_character && !_inst.is_placed) continue;
         var _entity = {id:string(_inst.id),sprite:coop_snapshot_sprite(_inst.sprite_index),frame:_inst.image_index,x:_inst.x,y:_inst.y,

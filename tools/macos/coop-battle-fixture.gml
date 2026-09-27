@@ -1,4 +1,6 @@
 function bridge_expect(_name, _passed) { array_push(global.bridge_tests, {name:_name, passed:_passed}); }
+// Audio lifecycle is exercised by the separate native audio fixture.
+function coop_audio_snapshot() { return {}; }
 function bridge_player_create() {
     coop_owner = ""; is_placed = false; grid_row = -1; grid_col = -1; hp = 600; max_hp = 600;
     try_place_player = function(_x, _y) {
@@ -29,7 +31,7 @@ function bridge_run() {
         submit_result:function(_outcome){global.bridge_results++; global.bridge_last_result = _outcome;}
     };
     var _battle = instance_create_depth(0,0,0,obj_battle);
-    _battle.map_spr_index = 0; _battle.battle_time = 60; _battle.current_wave = 1; _battle.total_wave = 5;
+    _battle.map_spr_index = 0; _battle.battle_time = 60; _battle.time_limit = 18000; _battle.current_wave = 1; _battle.total_wave = 5;
     instance_create_depth(0,0,0,obj_player_character);
     coop_battle_begin();
     bridge_expect("begin waits for server acknowledgement", global.bridge_starts == 1 && global.is_paused && !global.coop_battle.ready);
@@ -87,18 +89,26 @@ function bridge_run() {
     var _boss_bar = instance_create_depth(0,0,0,obj_boss_hpbar);
     _boss_bar.target_boss = _battle; _boss_bar.boss_id = ""; _boss_bar.boss_name = "Fixture Boss";
     _boss_bar.icon_spr = spr_win; _boss_bar.bar_width = 1200;
+    var _hud_objects = [obj_flame_manager,obj_world_map_button,obj_level_progress_bar,obj_battle_timer_display,obj_battle_pause_manager,obj_player_info_ui];
+    for(var _i=0;_i<array_length(_hud_objects);_i++) {
+        var _hud=instance_create_depth(0,0,-900,_hud_objects[_i]); _hud.sprite_index=spr_win;
+    }
+    var _plant=instance_create_depth(0,0,-50,obj_fixture_plant); _plant.sprite_index=spr_win; _plant.plant_type="normal";
+    var _projectile=instance_create_depth(0,0,25,obj_fixture_projectile); _projectile.sprite_index=spr_win;
     var _snapshot = coop_battle_snapshot();
     bridge_expect("gem display name safely falls back without metadata", _snapshot.gems[0].name == "fixture-gem");
     _gem.gem_info = {name:"激光宝石"};
     _snapshot = coop_battle_snapshot();
     bridge_expect("gem snapshot preserves the localized display name", _snapshot.gems[0].name == "激光宝石");
     bridge_expect("snapshot contains shared HUD and stable sprite names", _snapshot.flame == 250 && _snapshot.slots[0].sprite == "spr_win" && _snapshot.players[1].player_id == "guest" && _snapshot.slots[0].preview == "");
-    bridge_expect("entities are sorted back to front", array_length(_snapshot.entities) == 2 && _snapshot.entities[0].depth == 100 && _snapshot.entities[1].depth == -100);
+    bridge_expect("entities are sorted back to front", array_length(_snapshot.entities) == 4 && _snapshot.entities[0].depth == 100 && _snapshot.entities[3].depth == -100);
+    bridge_expect("HUD-only sprites are excluded while plants and projectiles remain", array_length(_snapshot.entities)==4 && _snapshot.entities[1].id==string(_projectile.id) && _snapshot.entities[2].id==string(_plant.id));
+    bridge_expect("wave HUD and remaining time survive snapshot", _snapshot.wave==1 && _snapshot.total_waves==5 && _snapshot.time_limit==18000);
     bridge_expect("enemy maxhp and transient effects survive snapshot", _snapshot.entities[0].max_hp == 500 && array_length(_snapshot.entities[0].effects) == 3 && _snapshot.entities[0].flash_alpha == 0.5 && _snapshot.entities[0].flash_shader == "hit_effect_2");
     bridge_expect("custom boss health bar survives snapshot", array_length(_snapshot.bosses) == 1 && _snapshot.bosses[0].hp == 250 && _snapshot.bosses[0].max_hp == 500);
     bridge_expect("snapshot round-trips JSON", is_struct(json_parse(json_stringify(_snapshot))));
     var _over = instance_create_depth(0,0,0,obj_game_over); _over.sprite_index = spr_win;
-    var _ui = instance_create_depth(0,0,0,obj_battle_pause_manager);
+    var _ui = instance_find(obj_battle_pause_manager,0);
     _ui.rewards_committed = false; _ui.victory_started = false;
     global.game_over = true; coop_battle_tick();
     bridge_expect("victory cannot submit before reward commit", global.bridge_results == 0);
