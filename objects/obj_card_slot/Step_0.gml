@@ -79,6 +79,9 @@ if keyboard_check_pressed(slot_key) && is_ready{
         
 			if global.quick_placement{
 				try_place_once()
+				// Quick hotkeys are one-shot attempts, including invalid targets.
+				// Mouse placement keeps its selection so the player can retry.
+				deselect_slot();
 			}
 			else{
 	        // 创建放置预览对象

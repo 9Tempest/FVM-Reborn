@@ -49,6 +49,15 @@ function select_slot(){
         global.selected_slot = id;
 }
 
+function deselect_slot(){
+    is_selected = false;
+    if (selected_preview != noone && instance_exists(selected_preview)) {
+        instance_destroy(selected_preview);
+    }
+    selected_preview = noone;
+    if (global.selected_slot == id) global.selected_slot = noone;
+}
+
 //尝试放置逻辑
 function try_place_once(_world_x = mouse_x, _world_y = mouse_y, _ordered = false){
 	if (coop_battle_active() && !_ordered) {
@@ -203,22 +212,8 @@ function try_place_once(_world_x = mouse_x, _world_y = mouse_y, _ordered = false
 				audio_play_sound(snd_enter_water,0,0)
 			}
             // 取消选择
-            is_selected = false;
-            if (selected_preview != noone && instance_exists(selected_preview)) {
-                instance_destroy(selected_preview);
-            }
-            selected_preview = noone;
-            if (global.selected_slot == id) global.selected_slot = noone;
+			deselect_slot();
 			return true;
         }
-		else if global.quick_placement{
-			// 取消选择
-            is_selected = false;
-            if (selected_preview != noone && instance_exists(selected_preview)) {
-                instance_destroy(selected_preview);
-            }
-            selected_preview = noone;
-            if (global.selected_slot == id) global.selected_slot = noone;
-		}
 	return false;
 }
