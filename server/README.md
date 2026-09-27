@@ -238,9 +238,9 @@ service, preserve the existing database/WAL/SHM files, then restore a checked ba
 as `coop.sqlite3` without stale WAL/SHM files. The `host-token` file is separate and
 must also be retained privately when moving the service.
 
-This directory does not deploy any public access. A later HTTPS/WSS reverse proxy
-may forward only the game endpoint to this loopback service. The reverse proxy
-must supply trusted TLS; plain `ws://` is only suitable for loopback testing.
+The standalone `run.sh` does not deploy public access. The optional macOS manager
+below adds an outbound WSS reverse proxy to this loopback service. The reverse proxy
+supplies trusted TLS; plain `ws://` is only suitable for loopback testing.
 Remote use requires the host Mac, game and service to remain available. Invitation
 tokens are bearer credentials and should be shared only with the invited player.
 The server trusts authenticated host simulation; it does not independently verify
@@ -250,6 +250,66 @@ The tests exercise real socket clients, authorization, one-use/expired invitatio
 role restrictions, sequence deduplication, snapshots, presence/resume, forced
 process restart, durable campaign writes, duplicate results, transaction rollback,
 safe HTTP routes, frame limits and consistent backups.
+
+## Optional Mac login service and free external connectivity
+
+This is an explicit opt-in installation. It does not ask for administrator access,
+change firewall rules, publish any files or enable SSH/desktop access. The installed
+HTTP service still has only `/game` and the minimal `/health` endpoint; other paths
+return an error. Cloudflared connects outward and uses encrypted HTTP/2 to Cloudflare.
+Its management diagnostic routes are disabled and its metrics listener is loopback.
+
+```sh
+server/.venv/bin/python server/manage.py install \
+  --game-data-dir '/absolute/GameMaker/save_directory'
+server/.venv/bin/python server/manage.py status
+server/.venv/bin/python server/manage.py stop
+server/.venv/bin/python server/manage.py start
+```
+
+`install` copies the required Python files into
+`~/Library/Application Support/FVM-Reborn/co-op/service`, creates an isolated venv
+there, installs the pinned dependency, and starts the user LaunchAgent
+`io.github.9tempest.fvmreborn.coop`. The database, token, backups, runtime logs and
+status JSON live in `~/Library/Application Support/FVM-Reborn/co-op`, outside Git.
+The background service does not depend on the source checkout continuing to exist.
+Re-running `install` safely stops the old service, updates code and starts it again;
+existing co-op data and credentials are retained.
+
+The installer accepts `--cloudflared /absolute/path` for an existing installation.
+Otherwise it installs the official Cloudflare macOS binary, release `2026.9.3`,
+into the private application data directory and verifies the archive SHA-256
+against the official GitHub release metadata before running it. Cloudflare's
+documented Homebrew alternative is `brew install cloudflared`; this Mac's Homebrew
+has no compatible bottle, so the checksum-verified official download is used.
+No Cloudflare account, domain purchase or paid plan is created.
+
+On every launcher start, a new free Quick Tunnel domain is obtained and the game's
+`coop/host.json` is atomically updated with the current `wss://.../game` public URL.
+The launcher supervises both child processes and reconnects after an exit. Each
+restart may change the domain; clients must refresh the host configuration before
+copying invitations. Room IDs and private resume credentials remain valid against
+the same local database. Existing client sessions must reconnect to the new URL.
+While reconnecting/stopped, the public URL is cleared to avoid advertising a dead
+endpoint. Private tokens are never written to logs or status output.
+
+The service automatically starts **after this macOS user logs in**, while enabled.
+It can operate only while this Mac is awake, online and running the host game.
+It does not prevent sleep or alter power settings. `stop` stops the service and
+disables automatic login startup; `start` re-enables it. `uninstall` removes the
+LaunchAgent but deliberately preserves the database/backups. Logs rotate at 2 MiB
+with three older files retained. `status` shows the public URL without credentials.
+
+Quick Tunnels are a free first-version connectivity/testing option, **not a
+permanent address or an uptime guarantee**. Cloudflare documents a 200-concurrent-
+request cap and no Server-Sent Events support; this game uses WebSockets. A stable
+named tunnel is a later option requiring explicit account/domain setup. No such
+setup is performed here.
+
+Official operational references:
+[Quick Tunnel limits](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/),
+[Cloudflare macOS installation](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/),
+[official release](https://github.com/cloudflare/cloudflared/releases/tag/2026.9.3).
 
 Primary API references: [Python sqlite3 backup](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.backup),
 [SQLite synchronous](https://sqlite.org/pragma.html#pragma_synchronous),
