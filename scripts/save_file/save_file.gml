@@ -39,7 +39,9 @@ function save_read_candidate(_path) {
         _text += file_text_read_string(_file);
         file_text_readln(_file);
     }
-    if (!file_text_close(_file)) return _result;
+    // The native VM reports false when a read handle has reached EOF.
+    // Validate the complete JSON below; write handles are still checked on close.
+    file_text_close(_file);
     try {
         var _data = json_parse(_text);
         if (save_data_valid(_data)) return {ok:true, text:_text, data:_data};

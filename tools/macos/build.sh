@@ -141,9 +141,9 @@ mkdir -p "$build_root/cache" "$build_root/temp" "$build_root/output" "$build_roo
 build_native
 
 case "$action" in
-    compile) igor_action=Compile ;;
+    compile|package-local) igor_action=Compile ;;
     run) igor_action=Run ;;
-    package|package-local) igor_action=PackageZip ;;
+    package) igor_action=PackageZip ;;
 esac
 igor_args=(
     "-j=${FVM_GAMEMAKER_JOBS:-1}"
@@ -156,7 +156,7 @@ igor_args=(
     "/runtime=$runtime_output"
     "/of=$build_root/output/FVM_Reborn"
 )
-if [[ "$action" == package || "$action" == package-local ]]; then
+if [[ "$action" == package ]]; then
     igor_args+=("/tf=$build_root/output/FVM_Reborn-macOS.zip")
 fi
 log_file="$build_root/logs/$(date +%Y%m%d-%H%M%S)-$action-$$.log"
@@ -171,18 +171,12 @@ COMPlus_ZapDisable=1 "$igor" "${igor_args[@]}" -- Mac "$igor_action" 2>&1 | tee 
 pipeline_status=("${PIPESTATUS[@]}")
 set -e
 if [[ "${pipeline_status[0]}" -ne 0 ]]; then
-    # Oven requires a Developer ID for its distribution entitlements. Only this
-    # exact post-compilation failure may continue to our local signing step.
-    if [[ "$action" == package-local && "$build_root/output/game.zip" -nt "$build_started" ]] \
-        && /usr/bin/grep -Fq 'Selected entitlements require explicit Signing Identifier.' "$log_file"; then
-        printf 'Game data compiled; assembling a locally signed app.\n'
-    else
-        printf 'GameMaker failed (exit %s). See the build log above.\n' "${pipeline_status[0]}" >&2
-        exit "${pipeline_status[0]}"
-    fi
+    printf 'GameMaker failed (exit %s). See the build log above.\n' "${pipeline_status[0]}" >&2
+    exit "${pipeline_status[0]}"
 fi
 [[ "${pipeline_status[1]}" -eq 0 ]] || fail 'The build log could not be written.'
 if [[ "$action" == package-local ]]; then
+    [[ "$build_root/output/game.zip" -nt "$build_started" ]] || fail 'GameMaker did not produce a fresh game.zip.'
     local_output="$build_root/output/local-$(date +%Y%m%d-%H%M%S)-$$"
     python3 "$script_dir/package-local.py" \
         --game-zip "$build_root/output/game.zip" --runtime "$runtime_root" \

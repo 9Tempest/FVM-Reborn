@@ -95,7 +95,7 @@ python3 FvmNativeSupport/macos/test_native.py
 ./tools/macos/build.sh package-local
 ```
 
-该命令先用已登录的 GameMaker 编译游戏。只有当本次新归档已生成、且官方打包明确停在缺少发布签名身份时，才继续本地组装；其他编译错误仍会使构建失败。成功后打印 `output/local-时间戳/FVM Reborn.app` 的完整路径。`package-local` 只支持 VM。
+该命令先用已登录的 GameMaker 执行 `Mac Compile`，确认本次新归档已生成后直接本地组装；不调用 Application Oven 的发布签名步骤，所有编译错误都会使构建失败。成功后打印 `output/local-时间戳/FVM Reborn.app` 的完整路径。`package-local` 只支持 VM。
 
 也可单独对已编译的 VM `game.zip` 运行 `python3 tools/macos/package-local.py --output /new/path/FVM\ Reborn.app`。该脚本支持 `--game-zip`、`--runtime`、`--icon` 和 `--zip`，并读取 `FVM_MACOS_BUILD_DIR` / `FVM_GAMEMAKER_RUNTIME`。它不能修复编译错误。
 

@@ -4,6 +4,10 @@ function load_file(file_slot) {
     if (!save_slot_valid(file_slot)) return false;
     var _old_data = variable_global_exists("save_data") ? global.save_data : undefined;
     var _old_slot = global.loaded_save_slot;
+    var _old_active_slot = global.save_slot;
+    var _old_json = global.save_last_json;
+    var _old_progress = global.save_last_progress;
+    var _old_check_time = global.save_last_check_time;
     var _old_ready = global.save_ready;
     var _old_depth = global.save_transaction_depth;
     var _path = "saves/save" + string(file_slot) + ".json";
@@ -71,7 +75,23 @@ function load_file(file_slot) {
     global.save_last_json = _recovered || _new ? "" : _candidate.text;
     global.save_last_progress = save_progress_json();
     global.save_last_check_time = current_time;
-    if (_recovered || _new || json_stringify(global.save_data) != global.save_last_json) save_file(file_slot);
+    if (_recovered || _new || json_stringify(global.save_data) != global.save_last_json) {
+        var _stored = save_file(file_slot);
+        if (_new && !_stored) {
+            global.save_data = _old_data;
+            global.save_slot = _old_active_slot;
+            global.loaded_save_slot = _old_slot;
+            global.save_ready = _old_ready;
+            global.save_last_json = _old_json;
+            global.save_last_progress = _old_progress;
+            global.save_last_check_time = _old_check_time;
+            if (_old_ready) {
+                global.player_name = _old_data.player.name;
+                global.total_time = _old_data.player.total_time;
+            }
+            return false;
+        }
+    }
     show_debug_message("存档加载成功! slot=" + string(file_slot));
     return true;
 }
