@@ -187,8 +187,14 @@ function bridge_run() {
     bridge_expect("victory cannot submit before reward commit", global.bridge_results == 0);
     global.bridge_wire = []; global.coop_battle.last_snapshot = current_time;
     _ui.rewards_committed = true; _ui.victory_started = true; _ui.victory_resources = []; _ui.victory_unlocks = []; _ui.victory_milestones = []; _ui.first_complete = true;
+    _ui.reward_difficulty = 3; _ui.reward_difficulty_name = "星际级"; _ui.reward_multiplier = 2; _ui.reward_scaling_applied = true;
+    _ui.victory_resources = [{id:"gold",name:"金币",amount:2000,base_amount:1000,sprite:spr_win,frame:0}];
     coop_battle_tick(); coop_battle_tick();
     bridge_expect("completed victory submits exactly once", global.bridge_results == 1 && global.bridge_last_result == "victory" && variable_struct_exists(global.bridge_last_snapshot,"victory"));
+    bridge_expect("guest snapshot preserves actual reward amounts and frozen difficulty", global.bridge_last_snapshot.victory.difficulty == 3
+        && global.bridge_last_snapshot.victory.multiplier == 2 && global.bridge_last_snapshot.victory.difficulty_name == "星际级"
+        && global.bridge_last_snapshot.victory.scaling_applied && global.bridge_last_snapshot.victory.resources[0].id == "gold"
+        && global.bridge_last_snapshot.victory.resources[0].amount == 2000 && global.bridge_last_snapshot.victory.resources[0].base_amount == 1000);
     bridge_expect("final victory snapshot precedes the result even between periodic frames",array_length(global.bridge_wire)==2 && global.bridge_wire[0]=="snapshot" && global.bridge_wire[1]=="result");
     var _final_snapshots=global.bridge_snapshots;
     for(var _i=0;_i<3;_i++) {

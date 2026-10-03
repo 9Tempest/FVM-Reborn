@@ -13,6 +13,8 @@ mus_inst.battle_music = global.level_data.pre_music
 
 global.game_over = false
 
+// Freeze the actual starting difficulty before constructing the reward manager.
+reward_difficulty = level_reward_difficulty(global.difficulty)
 instance_create_depth(0,0,0,obj_battle_pause_manager)
 instance_create_depth(0,0,-2900,obj_battle_timer_display)
 instance_create_depth(mouse_x,mouse_y,0,obj_player_character)

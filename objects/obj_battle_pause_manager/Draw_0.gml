@@ -50,13 +50,13 @@ if (victory_started) {
 	victory_text(240, 554, "猫损失", 0.9, _muted, _panel, fa_left, 180)
 	victory_text(512, 554, string(obj_task_manager.cat_loss), 1.4, _white, _panel, fa_right, 85)
 	victory_text(240, 597, "难度", 0.9, _muted, _panel, fa_left, 180)
-	victory_text(512, 597, string(global.difficulty), 1.1, _white, _panel, fa_right, 170)
+	victory_text(512, 597, reward_difficulty_name, 1.1, _white, _panel, fa_right, 170)
 	for (var _i = 0; _i < array_length(victory_milestones); _i++) {
 		var _a = victory_reveal(0.5 + _i * 0.1)
 		victory_text(240, 692 + _i * 41, victory_milestones[_i], 0.95, _teal, _a, fa_left, 276)
 	}
 
-	victory_text(590, 332, "通关奖励", 1.4, _white, _panel, fa_left, 500)
+	victory_text(590, 332, "通关奖励" + (reward_scaling_applied ? " " + string(reward_multiplier) + "倍" : ""), 1.4, _white, _panel, fa_left, 500)
 	for (var _i = 0; _i < 4; _i++) {
 		var _index = victory_page * 4 + _i
 		if (_index >= array_length(victory_resources)) break;

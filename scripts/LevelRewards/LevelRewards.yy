@@ -1,0 +1,10 @@
+{
+  "$GMScript":"v1",
+  "%Name":"LevelRewards",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"LevelRewards",
+  "parent":{"name":"Util","path":"folders/Util.yy"},
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0"
+}

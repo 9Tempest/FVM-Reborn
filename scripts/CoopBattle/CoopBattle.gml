@@ -367,13 +367,15 @@ function coop_battle_snapshot() {
             var _unlocks = [];
             for (var _i = 0; _i < array_length(_ui.victory_resources); _i++) {
                 var _r = _ui.victory_resources[_i];
-                array_push(_resources, {name:_r.name,amount:_r.amount,sprite:coop_snapshot_sprite(_r.sprite),frame:_r.frame});
+                array_push(_resources, {id:_r.id,name:_r.name,amount:_r.amount,base_amount:_r.base_amount,sprite:coop_snapshot_sprite(_r.sprite),frame:_r.frame});
             }
             for (var _i = 0; _i < array_length(_ui.victory_unlocks); _i++) {
                 var _u = _ui.victory_unlocks[_i];
                 array_push(_unlocks, {name:_u.name,kind:_u.kind,sprite:coop_snapshot_sprite(_u.sprite),card:_u.card,cost:_u.cost});
             }
-            _state.victory = {resources:_resources,unlocks:_unlocks,milestones:_ui.victory_milestones,first_complete:_ui.first_complete};
+            _state.victory = {resources:_resources,unlocks:_unlocks,milestones:_ui.victory_milestones,first_complete:_ui.first_complete,
+                difficulty:_ui.reward_difficulty,difficulty_name:_ui.reward_difficulty_name,
+                multiplier:_ui.reward_multiplier,scaling_applied:_ui.reward_scaling_applied};
         }
     }
     return _state;

@@ -299,17 +299,18 @@ for(var i = deck_first_slot_index; i < deck_first_slot_index+11;i++){
 	draw_text(120,650,"BOSS数量："+string(boss_amount))
 	
 	//绘制奖励
-	if global.level_file.version != "1.0.0"{
+	if global.level_file.version != "1.0.0" && !global.laboretory_room{
+		draw_text(100,740,level_reward_difficulty_name(global.difficulty) + " · 金币与材料 " + string(level_reward_multiplier(global.difficulty)) + "倍")
 		if array_get_index(global.save_data.completed_levels,global.level_data.id) == -1{
 			draw_text(100,780,"关卡奖励（首通）")
-			draw_text(100,820,"金币（"+string(global.level_file.rewards[1].gold)+"）")
+			draw_text(100,820,"金币（"+string(level_reward_amount(global.level_file.rewards[1].gold,global.difficulty))+"）")
 			draw_text(100,860,"技能："+string(global.level_file.rewards[1].skill_level)+"级")
 			var item_string = ""
 			var item_list = global.level_file.rewards[1].items
 			for(var i = 0 ; i < array_length(item_list) ; i++){
 				var item_id = item_list[i].id
 				var item_data = get_material_info(item_id)
-				item_string += (item_data.name + "（"+string(item_list[i].amount)+"） ")
+				item_string += (item_data.name + "（"+string(level_reward_amount(item_list[i].amount,global.difficulty))+"） ")
 			}
 			draw_text(100,900,item_string)
 			draw_text(100,940,"等级："+string(global.level_file.rewards[1].player_level)+"级")
@@ -340,13 +341,13 @@ for(var i = deck_first_slot_index; i < deck_first_slot_index+11;i++){
 		}
 		else{
 			draw_text(100,780,"关卡奖励")
-			draw_text(100,820,"金币（"+string(global.level_file.rewards[0].gold)+"）")
+			draw_text(100,820,"金币（"+string(level_reward_amount(global.level_file.rewards[0].gold,global.difficulty))+"）")
 			var item_string = ""
 			var item_list = global.level_file.rewards[0].items
 			for(var i = 0 ; i < array_length(item_list) ; i++){
 				var item_id = item_list[i].id
 				var item_data = get_material_info(item_id)
-				item_string += (item_data.name + "（"+string(item_list[i].amount)+"） ")
+				item_string += (item_data.name + "（"+string(level_reward_amount(item_list[i].amount,global.difficulty))+"） ")
 			}
 			draw_text(100,860,item_string)
 		}

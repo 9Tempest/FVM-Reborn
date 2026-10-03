@@ -475,6 +475,10 @@ function coop_guest_rewards() {
     var _won=coop_get(_s,"outcome","")=="victory";
     draw_set_colour(make_colour_rgb(6,18,26)); draw_set_alpha(0.94); draw_rectangle(0,0,1920,1080,false);
     coop_ui_text(960,135,_won ? "共同冒险 / 胜利" : "再试一次",2.5,make_colour_rgb(250,206,111),fa_center,1700);
+    if (_won && coop_get(_v,"scaling_applied",false)) {
+        coop_ui_text(960,183,coop_get(_v,"difficulty_name","") + " · 通关奖励 " + string(coop_get(_v,"multiplier",1)) + "倍",
+            0.9,make_colour_rgb(139,210,189),fa_center,1500);
+    }
     coop_ui_text(960,228,_c.result_saved ? "奖励与共同进度已保存到主机" : "正在等待主机确认存档…",1,c_white,fa_center,1500);
     var _resources=coop_get(_v,"resources",[]);
     for (var _i=0;_i<array_length(_resources);_i++) {
