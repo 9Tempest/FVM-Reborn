@@ -300,7 +300,7 @@ for(var i = deck_first_slot_index; i < deck_first_slot_index+11;i++){
 	
 	//绘制奖励
 	if global.level_file.version != "1.0.0" && !global.laboretory_room{
-		draw_text(100,740,level_reward_difficulty_name(global.difficulty) + " · 金币与材料 " + string(level_reward_multiplier(global.difficulty)) + "倍")
+		draw_text(100,740,level_reward_difficulty_name(global.difficulty) + "  金币与材料 " + string(level_reward_multiplier(global.difficulty)) + "倍")
 		if array_get_index(global.save_data.completed_levels,global.level_data.id) == -1{
 			draw_text(100,780,"关卡奖励（首通）")
 			draw_text(100,820,"金币（"+string(level_reward_amount(global.level_file.rewards[1].gold,global.difficulty))+"）")
