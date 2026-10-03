@@ -6,7 +6,11 @@
 
 macOS 已完成原生构建、独立应用打包和实际主菜单/战斗验证。中文显示、鼠标布阵、数字键选卡、60 FPS 战斗与 120 FPS 加速已验证；原生扩展在 arm64 / x86_64 上各通过 20 项测试。运行 `./tools/macos/build.sh package-local` 可构建本机使用的沙盒应用。关键操作即时自动存档与中断恢复通过原生 VM 44 项测试；新版通关界面展示金币、材料、卡面和装备，奖励幂等与动画交互通过 7 项测试。Intel 完整游戏尚未实际验收。
 
-双人合作为实验性功能：两台 Mac 共享战役与卡库，各自选卡并确认准备，使用独立火苗与卡牌冷却；队友可跟随观看房主的选关与合成菜单。进度保存在房主电脑，新配置默认最高难度。创建房间、邀请码、操作与断线恢复见 [两台 Mac 异地合作说明](docs/COOP_MAC.md)。[coop.3 发布包](https://github.com/9Tempest/FVM-Reborn/releases/tag/v2.4.1-macos-coop.3)已完成实际下载、安装与保留旧存档的启动验证；同机隔离双客户端通过本地 WS 52/52、最终公网 WSS 53/53。另一台异地 Mac 的完整游玩仍待验收。
+双人合作为实验性功能：两台 Mac 共享战役与卡库，各自选卡并确认准备，使用独立火苗与卡牌冷却；队友可跟随观看房主的选关与合成菜单。进度保存在房主电脑，新配置默认最高难度。创建房间、邀请码、操作与断线恢复见 [两台 Mac 异地合作说明](docs/COOP_MAC.md)。
+
+[coop.4](https://github.com/9Tempest/FVM-Reborn/releases/tag/v2.4.1-macos-coop.4) 新增通关金币与材料的难度倍率：美味级、火山级、浮空级、星际级分别为 **1 / 1.25 / 1.5 / 2 倍**，在所选关卡原有奖励上应用，逐项向下取整。单人与双人的首通、复刷均适用；战斗开始时固定本局奖励难度。双方获得完整共同奖励，解锁、任务和战中拾取不变。已安装 coop.3 服务无需重装。奖励原生测试 165/165、桥接 53/53 已通过；本版完整公网 WSS 连续两场和实际下载安装仍待验收，详见 [coop.4 发行说明](docs/releases/macos-coop-4.md)。
+
+上一版 [coop.3](https://github.com/9Tempest/FVM-Reborn/releases/tag/v2.4.1-macos-coop.3) 已完成实际下载、安装与保留旧存档的启动验证；同机隔离双客户端通过本地 WS 52/52、公网 WSS 53/53。历史结果不代替新包验收，另一台异地 Mac 的完整游玩仍待验收。
 
 ---
 
@@ -61,7 +65,7 @@ macOS 已完成原生构建、独立应用打包和实际主菜单/战斗验证�
 
 ## 安装与运行
 
-Windows 版可从上游 Releases 下载并解压运行。macOS 版可从 [coop.3 下载页](https://github.com/9Tempest/FVM-Reborn/releases/tag/v2.4.1-macos-coop.3)取得已验证的通用应用，或按 [macOS 构建说明](docs/MACOS.md) 编译运行。该测试包采用 ad-hoc 签名，未经 Apple 公证；安装与校验见 [合作说明](docs/COOP_MAC.md)。请保持应用内的资源文件完整。
+Windows 版可从上游 Releases 下载并解压运行。macOS 版可从 [coop.4 下载页](https://github.com/9Tempest/FVM-Reborn/releases/tag/v2.4.1-macos-coop.4)取得通用应用（本版验收进度见发行说明），或按 [macOS 构建说明](docs/MACOS.md) 编译运行。该测试包采用 ad-hoc 签名，未经 Apple 公证；安装与校验见 [合作说明](docs/COOP_MAC.md)。请保持应用内的资源文件完整。
 
 ## 构建方式
 
