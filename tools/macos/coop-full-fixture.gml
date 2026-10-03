@@ -22,12 +22,15 @@ function coop_full_init() {
     test_shared_menu=false; test_shared_craft=false; test_shared_map=false; test_shared_clear=false;
     test_shared_at=0; test_shared_seq=0;
     test_input_at=0; test_input_visible=false;
-    test_base_gold=global.save_data.player.gold;
+    test_reward_round=1;
+    test_base_gold=0; test_base_material=0;
+    test_reward_reports=[];
     test_slot_json=global.save_last_json;
     persistent=true;
     show_debug_message("FVM_FULL_SAVE_ROOT="+game_save_id);
 }
 function coop_full_expect(_name,_ok) {
+    _name="round "+string(test_reward_round)+": "+_name;
     array_push(test_report,{name:_name,passed:_ok});
     show_debug_message("FVM_FULL_ASSERT="+string(_ok)+" "+_name);
 }
@@ -44,9 +47,57 @@ function coop_full_slot(_owner,_card) {
     for(var _i=0;_i<array_length(_slots);_i++) if(_slots[_i].owner==_owner && _slots[_i].card_id==_card) return _slots[_i];
     return undefined;
 }
+function coop_full_begin_battle() {
+    // Capture campaign balances after the new match starts, before any input.
+    test_base_gold=global.save_data.player.gold;
+    test_base_material=get_material_amount("natural_spices");
+    coop_full_expect("campaign starts with the correct first-clear state",
+        (array_get_index(global.save_data.completed_levels,"cookie_island")==-1)==(test_reward_round==1));
+    if (test_role=="host") {
+        var _reward=global.level_file.rewards[test_reward_round==1 ? 1 : 0];
+        coop_full_expect("real Cookie Island base rewards remain 1000 gold and 20 spices",
+            _reward.gold==1000 && array_length(_reward.items)==1
+            && _reward.items[0].id=="natural_spices" && _reward.items[0].amount==20);
+    }
+}
+function coop_full_check_rewards(_victory) {
+    var _resources=coop_get(_victory,"resources",[]),_gold=undefined,_spices=undefined;
+    for(var _i=0;_i<array_length(_resources);_i++) {
+        var _resource=_resources[_i];
+        if(coop_get(_resource,"id","")=="gold") _gold=_resource;
+        if(coop_get(_resource,"id","")=="natural_spices") _spices=_resource;
+    }
+    var _gold_delta=global.save_data.player.gold-test_base_gold;
+    var _material_delta=get_material_amount("natural_spices")-test_base_material;
+    // Independent expected values for the real map at difficulty 3. Do not use
+    // the production reward helper to calculate the test's expected amounts.
+    coop_full_expect("actual campaign gains exactly 2000 gold and 40 spices",
+        _gold_delta==2000 && _material_delta==40);
+    coop_full_expect("victory snapshot identifies the frozen highest difficulty and multiplier",
+        coop_get(_victory,"difficulty",-1)==3 && coop_get(_victory,"difficulty_name","")=="星际级"
+        && coop_get(_victory,"multiplier",0)==2 && coop_get(_victory,"scaling_applied",false));
+    coop_full_expect("victory distinguishes first clear from repeat clear",
+        coop_get(_victory,"first_complete",undefined)==(test_reward_round==1));
+    coop_full_expect("victory resource amounts match the actual profile increments",
+        array_length(_resources)==2 && is_struct(_gold) && is_struct(_spices)
+        && coop_get(_gold,"amount",-1)==_gold_delta && coop_get(_spices,"amount",-1)==_material_delta
+        && coop_get(_gold,"base_amount",-1)==1000 && coop_get(_spices,"base_amount",-1)==20);
+    var _report={round:test_reward_round,match_id:global.coop.match_id,player_id:global.coop.player_id,
+        before:{gold:test_base_gold,natural_spices:test_base_material},
+        after:{gold:global.save_data.player.gold,natural_spices:get_material_amount("natural_spices")},
+        victory:_victory};
+    array_push(test_reward_reports,_report);
+    show_debug_message("FVM_FULL_REWARD="+json_stringify(_report));
+}
+function coop_full_next_round() {
+    test_reward_round++;
+    test_loadout_selected=false; test_loadout_ready=false; test_loadout_image=false;
+    test_loadout_at=0; test_guest_second=false; test_input_visible=false; test_input_at=0;
+    test_at=current_time;
+}
 function coop_full_finish() {
     var _f=file_text_open_write("full-results.json");
-    file_text_write_string(_f,json_stringify({role:test_role,tests:test_report})); file_text_close(_f);
+    file_text_write_string(_f,json_stringify({role:test_role,tests:test_report,rewards:test_reward_reports})); file_text_close(_f);
     show_debug_message("FVM_FULL_DONE="+test_role);
     game_end();
 }
@@ -91,7 +142,8 @@ function coop_full_step() {
     }
     // Use the real preparation RPCs and UI state. Selecting cards is separate
     // from Ready, and the guest deliberately waits so one-sided Ready is tested.
-    if (_c.active && is_struct(_c.preparation) && !_c.battle_started && !_c.result_saved) {
+    if (_c.active && is_struct(_c.preparation) && !_c.battle_started
+        && ((test_role=="host" && test_stage==3) || (test_role=="guest" && test_stage==4))) {
         var _wanted=test_role=="host" ? ["small_fire","xiao_long_bao"] : ["xiao_long_bao","small_fire"];
         if (!test_loadout_selected && !_c.loadout_pending) {
             test_loadout_selected=_c.set_loadout(_wanted,false); test_loadout_at=current_time;
@@ -188,6 +240,7 @@ function coop_full_step() {
         }
         if (test_stage==3 && _c.battle_started && room==room_battle) {
             coop_full_expect("both Ready automatically launch the selected level",_c.match_config.per_player_loadouts && _c.match_config.level_id=="cookie_island");
+            coop_full_begin_battle();
             test_stage=4; return;
         }
         if (test_stage==4 && _c.battle_started && variable_global_exists("coop_battle") && global.coop_battle.ready) {
@@ -229,17 +282,23 @@ function coop_full_step() {
         }
         if (test_stage==8 && _c.result_saved) {
             coop_full_expect("victory acknowledged only after database commit",true);
-            coop_full_expect("first-clear gold granted exactly once",global.save_data.player.gold==test_base_gold+global.level_file.rewards[1].gold);
-            var _before=global.save_data.player.gold;
+            coop_full_check_rewards(coop_battle_snapshot().victory);
+            var _before=coop_campaign_progress(json_stringify(global.save_data));
+            var _display_before=json_stringify(coop_battle_snapshot().victory);
             obj_battle_pause_manager.commit_victory_rewards();
-            coop_full_expect("repeat victory call does not grant again",global.save_data.player.gold==_before);
+            obj_battle_pause_manager.commit_victory_rewards();
+            coop_full_expect("repeat victory calls cannot grant resources or unlocks again",
+                coop_campaign_progress(json_stringify(global.save_data))==_before);
+            coop_full_expect("repeat victory calls do not multiply displayed rewards again",
+                json_stringify(coop_battle_snapshot().victory)==_display_before);
             coop_full_expect("single player save file untouched by co-op rewards",save_read_candidate("saves/save0.json").text==test_slot_json);
             test_stage=9; test_at=current_time;
         }
         if (test_stage==9 && current_time-test_at>5000) {
             coop_full_expect("saved result is not overwritten by late snapshot errors",string_pos("联机提示：",_c.status)==0);
-            surface_save(application_surface,"host-victory.png");
-            show_debug_message("FVM_FULL_IMAGE="+game_save_id+"host-victory.png");
+            var _image="host-victory-round-"+string(test_reward_round)+".png";
+            surface_save(application_surface,_image);
+            show_debug_message("FVM_FULL_IMAGE="+game_save_id+_image);
             global.gui_stack.to(room_coop);
             _c.prepare_loadout(global.level_data.id,global.level_data.name,deck_slot_max());
             test_stage=10; return;
@@ -253,11 +312,15 @@ function coop_full_step() {
         if (test_stage==11 && current_time-test_at>2000) {
             surface_save(application_surface,"host-cached-loadout.png");
             show_debug_message("FVM_FULL_IMAGE="+game_save_id+"host-cached-loadout.png");
+            if (test_reward_round==1) {
+                coop_full_next_round(); test_stage=3; return;
+            }
             coop_full_finish();
         }
     } else {
         if (test_stage==4 && _c.battle_started && is_struct(_c.latest) && array_length(coop_get(_c.latest,"players",[]))==2) {
             coop_full_expect("shared-screen view yields to each player's game HUD",test_shared_map && !coop_screen_visible());
+            coop_full_begin_battle();
             // Cookie Island prepopulates rows 1-4, columns 0-1 with plants.
             _c.send_input("place_player",{row:5,col:0}); test_stage=5; test_at=current_time; return;
         }
@@ -290,13 +353,14 @@ function coop_full_step() {
             test_stage=7;
         }
         if (test_stage==7 && _c.result_saved && is_struct(coop_get(_c.latest,"victory"))) {
-            coop_full_expect("guest received first-clear reward visuals",array_length(_c.latest.victory.resources)>0);
+            coop_full_check_rewards(_c.latest.victory);
             coop_full_expect("guest received the durable shared campaign",array_get_index(global.save_data.completed_levels,"cookie_island")>=0);
             coop_full_expect("guest solo file untouched",save_read_candidate("saves/save0.json").text==test_slot_json);
             test_stage=8; test_at=current_time;
         }
         if (test_stage==8 && current_time-test_at>1800) {
-            surface_save(application_surface,"guest-victory.png"); show_debug_message("FVM_FULL_IMAGE="+game_save_id+"guest-victory.png");
+            var _image="guest-victory-round-"+string(test_reward_round)+".png";
+            surface_save(application_surface,_image); show_debug_message("FVM_FULL_IMAGE="+game_save_id+_image);
             _c.battle_started=false;_c.latest=undefined;test_stage=9;
         }
         if (test_stage==9 && is_struct(_c.preparation)) {
@@ -305,6 +369,9 @@ function coop_full_step() {
             coop_full_expect("guest must explicitly Ready again",!_choice.ready && _c.room_status!="running");
             surface_save(application_surface,"guest-cached-loadout.png");
             show_debug_message("FVM_FULL_IMAGE="+game_save_id+"guest-cached-loadout.png");
+            if (test_reward_round==1) {
+                coop_full_next_round(); test_stage=4; return;
+            }
             coop_full_finish();
         }
     }

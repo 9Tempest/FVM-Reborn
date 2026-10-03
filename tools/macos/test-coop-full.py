@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Run two isolated copies of the complete native game through a real co-op battle.
+"""Run two isolated copies of the complete native game through two co-op battles.
 
 The test injects only a controller into a temporary project, uses a fresh server
 and two unique sandbox identities, and never opens the installed user game/save.
 An explicit fixture starting-flame balance permits immediate placement of two
-starter cards. A synthetic victory then exercises production rewards/SQLite.
+starter cards. Synthetic first-clear and repeat-clear victories exercise production
+reward scaling, shared presentation, campaign writes and SQLite settlement.
 Screenshots are saved for visual review.
 """
 import argparse, importlib.util, json, os, plistlib, re, select, shutil, sqlite3
@@ -58,6 +59,71 @@ def package(root,runtime,role,appid):
     subprocess.run(['codesign','--force','--sign','-','--entitlements',str(ent),str(app)],check=True,capture_output=True)
     subprocess.run(['codesign','--verify','--deep','--strict',str(app)],check=True,capture_output=True)
     return app
+
+def reward_balances(profile):
+    return {'gold':profile.get('player',{}).get('gold'),
+            'natural_spices':sum(item.get('amount',0) for item in profile.get('inventory',[])
+                                 if item.get('id')=='natural_spices')}
+
+def reward_checks(db,rewards):
+    """Compare independent expected amounts with both real clients and SQL receipts."""
+    checks=[]
+    def expect(name,passed):checks.append({'name':name,'passed':bool(passed)})
+    by_role={role:[r for r in rewards if r['role']==role] for role in ('host','guest')}
+    rows=db.execute('select match_id,result_json,profiles_json from match_results order by committed_at').fetchall()
+    expect('first-clear and repeat-clear each have one distinct durable result',
+           len(rows)==2 and len({row[0] for row in rows})==2)
+    expect('both native clients report both reward rounds',
+           all([r.get('round') for r in by_role[role]]==[1,2] for role in by_role))
+    receipts={match_id:json.loads(profiles) for match_id,_,profiles in rows}
+    expected={'gold':2000,'natural_spices':40}
+    for index in (1,2):
+        host=next((r for r in by_role['host'] if r.get('round')==index),None)
+        guest=next((r for r in by_role['guest'] if r.get('round')==index),None)
+        label=f'reward round {index}'
+        expect(label+': host and guest agree on balances, displayed rewards and match',
+               host is not None and guest is not None
+               and all(host.get(key)==guest.get(key) for key in ('before','after','victory','match_id')))
+        for role,record in (('host',host),('guest',guest)):
+            if record is None:continue
+            before,after=record.get('before',{}),record.get('after',{})
+            victory=record.get('victory',{})
+            resources=victory.get('resources',[])
+            displayed={r.get('id'):r.get('amount') for r in resources}
+            bases={r.get('id'):r.get('base_amount') for r in resources}
+            expect(label+f': {role} receives independently expected scaled amounts',
+                   all(after.get(key,-1)-before.get(key,0)==value for key,value in expected.items()))
+            expect(label+f': {role} displays actual increments and original bases',
+                   len(resources)==2 and displayed==expected and bases=={'gold':1000,'natural_spices':20})
+            expect(label+f': {role} receives highest-difficulty metadata and correct clear type',
+                   victory.get('difficulty')==3 and victory.get('difficulty_name')=='星际级'
+                   and victory.get('multiplier')==2 and victory.get('scaling_applied') is True
+                   and victory.get('first_complete') is (index==1))
+            committed=receipts.get(record.get('match_id'),{}).get(record.get('player_id'),{}).get('profile',{})
+            expect(label+f': {role} live campaign agrees with its durable settlement receipt',
+                   reward_balances(committed)==after and 'cookie_island' in committed.get('completed_levels',[]))
+        if host is not None and len(rows)>=index:
+            expect(label+': ordered SQLite result is the same victorious match',
+                   rows[index-1][0]==host.get('match_id')
+                   and json.loads(rows[index-1][1]).get('outcome')=='victory')
+    profiles=[json.loads(row[0]) for row in db.execute('select profile_json from profiles')]
+    expect('both profiles persist the same completed campaign',
+           len(profiles)==2 and profiles[0]==profiles[1]
+           and all('cookie_island' in p.get('completed_levels',[]) for p in profiles))
+    for role,records in by_role.items():
+        if len(records)!=2:continue
+        first,repeat=records
+        expect(role+': repeat-clear starts from the first committed reward balances',
+               repeat.get('before')==first.get('after'))
+        expect(role+': exactly two rewards total 4000 gold and 80 spices in SQLite',
+               len(profiles)==2 and all(
+                   all(reward_balances(p).get(key,-1)-first.get('before',{}).get(key,0)==2*amount
+                       for key,amount in expected.items()) for p in profiles))
+    placement_rows=db.execute("select match_id,count(distinct player_id) from commands where action='place_card' group by match_id").fetchall()
+    expect('both players have durable placement commands in both matches',
+           len(placement_rows)==2 and all(count==2 for _,count in placement_rows)
+           and {match_id for match_id,_ in placement_rows}==set(receipts))
+    return checks
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
@@ -165,10 +231,10 @@ asyncio.run(probe())
             time.sleep(.3)
         if not invite:raise RuntimeError('No invitation within deadline')
         launch('guest',invite)
-        print('Guest started; waiting for the real shared battle and victory commit.',flush=True)
+        print('Guest started; waiting for first-clear and repeat-clear battles and reward commits.',flush=True)
         deadline=time.monotonic()+450
         while any(p.poll() is None for p in children) and time.monotonic()<deadline:time.sleep(.5)
-        reports=[];images=[];latency=[];screen_metrics=[]
+        reports=[];images=[];latency=[];screen_metrics=[];rewards=[]
         for role in ['host','guest']:
             text=(root/'logs'/f'{role}.log').read_text(errors='replace')
             matches=re.findall(r'^FVM_FULL_ASSERT=(\d) (.+)$',text,re.M)
@@ -176,17 +242,15 @@ asyncio.run(probe())
             reports.append({'name':role+': process completed','passed':f'FVM_FULL_DONE={role}' in text})
             latency += [{'role':role,'input_to_visible_ms':float(ms)} for ms in re.findall(r'^FVM_FULL_INPUT_VISIBLE_MS=(\d+(?:\.\d+)?)$',text,re.M)]
             screen_metrics += [json.loads(metric) for metric in re.findall(r'^FVM_FULL_SCREEN_METRIC=(.+)$',text,re.M)]
+            rewards += [{'role':role,**json.loads(record)} for record in re.findall(r'^FVM_FULL_REWARD=(.+)$',text,re.M)]
             for image in re.findall(r'^FVM_FULL_IMAGE=(.+)$',text,re.M):
                 path=Path(image)
                 if path.is_file():
                     target=root/(('wss-' if args.tunnel else 'ws-')+path.name);shutil.copyfile(path,target);images.append(str(target))
         db=sqlite3.connect(data/'coop.sqlite3')
-        reports.append({'name':'one durable match result','passed':db.execute('select count(*) from match_results').fetchone()[0]==1})
-        profiles=[json.loads(row[0]) for row in db.execute('select profile_json from profiles')]
-        reports.append({'name':'both profiles persist the same completed campaign','passed':len(profiles)==2 and profiles[0]==profiles[1] and all('cookie_island' in p.get('completed_levels',[]) for p in profiles)})
-        reports.append({'name':'both players have durable ordered placement commands','passed':db.execute("select count(distinct player_id) from commands where action='place_card'").fetchone()[0]==2})
+        reports += reward_checks(db,rewards)
         db.close()
-        result={'transport':'wss' if args.tunnel else 'ws','passed':sum(t['passed'] for t in reports),'total':len(reports),'tests':reports,'images':images,'latency_samples':latency,'screen_metrics':screen_metrics}
+        result={'transport':'wss' if args.tunnel else 'ws','passed':sum(t['passed'] for t in reports),'total':len(reports),'tests':reports,'images':images,'latency_samples':latency,'screen_metrics':screen_metrics,'reward_rounds':rewards}
         (root/'results.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
         (root/('results-'+result['transport']+'.json')).write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
         print(json.dumps(result,ensure_ascii=False,indent=2),flush=True)
