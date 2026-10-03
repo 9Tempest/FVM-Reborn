@@ -6,6 +6,16 @@ depth = -3000
 settlement = false
 first_complete = false
 
+// Freeze the run's opening difficulty before any pause/result UI can change settings.
+var _opening_difficulty = global.difficulty
+if (instance_exists(obj_battle) && variable_instance_exists(obj_battle, "reward_difficulty")) {
+	_opening_difficulty = obj_battle.reward_difficulty
+}
+reward_difficulty = level_reward_difficulty(_opening_difficulty)
+reward_multiplier = level_reward_multiplier(reward_difficulty)
+reward_difficulty_name = level_reward_difficulty_name(reward_difficulty)
+reward_scaling_applied = global.level_file.version != "1.0.0" && !global.laboretory_room
+
 slot_unlock_level_id_list = ["cookie_island","salad_island_land","salad_island_water","champagne_island_land","champagne_island_water","cocoa_island_daytime","curry_island_night"]
 
 // Reward commitment is separate from the player opening the results panel.
@@ -62,11 +72,11 @@ function commit_victory_rewards() {
 			}
 
 		}
-		global.save_data.player.gold += global.level_file.rewards[1].gold
+		global.save_data.player.gold += level_reward_amount(global.level_file.rewards[1].gold, reward_difficulty)
 		var item_list = global.level_file.rewards[1].items
 		for(var i = 0 ; i < array_length(item_list) ; i++){
 			var item_id = item_list[i].id
-			add_material_amount(item_id,real(item_list[i].amount))
+			add_material_amount(item_id,level_reward_amount(item_list[i].amount, reward_difficulty))
 		}
 
 		var card_unlock_id_list = global.level_file.rewards[1].card_unlock
@@ -88,11 +98,11 @@ function commit_victory_rewards() {
 		}
 	}
 	else{
-		global.save_data.player.gold += global.level_file.rewards[0].gold
+		global.save_data.player.gold += level_reward_amount(global.level_file.rewards[0].gold, reward_difficulty)
 		var item_list = global.level_file.rewards[0].items
 		for(var i = 0 ; i < array_length(item_list) ; i++){
 			var item_id = item_list[i].id
-			add_material_amount(item_id,item_list[i].amount)
+			add_material_amount(item_id,level_reward_amount(item_list[i].amount, reward_difficulty))
 		}
 	}
 	// First-clear flags, all unlocks, task progress and all rewards reach disk together.
@@ -119,11 +129,12 @@ function start_victory_presentation() {
 	obj_game_over.image_alpha = 0
 	if (global.level_file.version == "1.0.0" || global.laboretory_room) return;
 	var _reward = global.level_file.rewards[first_complete ? 1 : 0]
-	if (_reward.gold > 0) array_push(victory_resources, {name:"金币", amount:_reward.gold, sprite:spr_coin, frame:0})
+	var _gold = level_reward_amount(_reward.gold, reward_difficulty)
+	if (_gold > 0) array_push(victory_resources, {id:"gold", name:"金币", base_amount:real(_reward.gold), amount:_gold, sprite:spr_coin, frame:0})
 	for (var _i = 0; _i < array_length(_reward.items); _i++) {
 		var _item = _reward.items[_i]
 		var _info = get_material_info(_item.id)
-		array_push(victory_resources, {name:_info.name, amount:_item.amount, sprite:spr_craft_material, frame:_info.icon})
+		array_push(victory_resources, {id:_item.id, name:_info.name, base_amount:real(_item.amount), amount:level_reward_amount(_item.amount, reward_difficulty), sprite:spr_craft_material, frame:_info.icon})
 	}
 	if (first_complete) {
 		for (var _i = 0; _i < array_length(_reward.card_unlock); _i++) {

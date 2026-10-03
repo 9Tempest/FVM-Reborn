@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -36,10 +37,16 @@ def prepare(root, app_id, interactive):
     shutil.rmtree(project / "scripts")
     shutil.rmtree(project / "objects")
     parent = {"name": "Harness", "path": "folders/Harness.yy"}
+    name = "LevelRewards"
+    shutil.copytree(REPO / "scripts" / name, project / "scripts" / name)
+    helper_path = project / "scripts" / name / (name + ".yy")
+    helper_meta = support.read_yy(helper_path)
+    helper_meta["parent"] = parent
+    support.write_yy(helper_path, helper_meta)
+    yyp["resources"].append({"id": {"name": name, "path": str(helper_path.relative_to(project))}})
     sprites = ["spr_slot", "spr_coin", "spr_craft_material", "spr_flame", "spr_win", "spr_lose", "spr_place_player_tip", "spr_double_long_bao", "spr_coke_bomb", "spr_mouse_clip"]
     # Use the exact registered equipment icons rather than guessed asset names.
     weapon_text = (REPO / "scripts/weapons_init/weapons_init.gml").read_text()
-    import re
     for item in ("star_gun", "cookie_shield", "attack_gem"):
         match = re.search(r'"' + item + r'"\s*,\s*\{.*?"icon"\s*:\s*(spr_\w+)', weapon_text, re.S)
         if not match:
@@ -98,7 +105,7 @@ if (keyboard_check_pressed(ord("1"))) fixture_show(1)
 if (keyboard_check_pressed(ord("2"))) fixture_show(2)
 if (keyboard_check_pressed(ord("3"))) fixture_show(3)
 '''
-    step += "if (fixture_frame == 555) { show_debug_message(\"FVM_VICTORY_SAVE_CALLS=\" + string(global.fixture_saves)); " + ("fixture_show(1);" if interactive else "game_end();") + " }\n"
+    step += "if (fixture_frame == 555) { fixture_report(); show_debug_message(\"FVM_VICTORY_SAVE_CALLS=\" + string(global.fixture_saves)); " + ("fixture_show(1);" if interactive else "game_end();") + " }\n"
     (project / "objects/obj_autosave_tests/Step_2.gml").write_text(step)
     room = project / yyp["RoomOrderNodes"][0]["roomId"]["path"]
     data = support.read_yy(room)
@@ -113,6 +120,7 @@ if (keyboard_check_pressed(ord("3"))) fixture_show(3)
         "app_id": app_id,
         "project": str(project_file),
         "save_io": "All save calls are stubbed; production save scripts are excluded.",
+        "reward_helper_sha256": hashlib.sha256((REPO / "scripts/LevelRewards/LevelRewards.gml").read_bytes()).hexdigest(),
         "production_sources": {
             name: hashlib.sha256((REPO / "objects/obj_battle_pause_manager" / name).read_bytes()).hexdigest()
             for name in ("Create_0.gml", "Draw_0.gml", "Step_2.gml")
@@ -158,16 +166,27 @@ def main():
     for lib in sorted(contents.rglob("*.dylib")):
         subprocess.run(["codesign", "--force", "--sign", "-", str(lib)], check=True, capture_output=True)
     subprocess.run(["codesign", "--force", "--sign", "-", "--entitlements", str(entitlements), str(app)], check=True, capture_output=True)
+    # Use the real resource path explicitly, including macOS /private/tmp aliases.
+    # This matches the production launcher's -game workaround without touching user apps.
+    run_command = [str(contents / "MacOS/Mac_Runner"), "-game", str(contents / "Resources/game.ios").replace("/private/tmp/", "/tmp/")]
     if args.interactive:
         with (root / "logs/run.log").open("wb") as log:
-            subprocess.Popen([str(contents / "MacOS/Mac_Runner")], cwd=root, stdout=log, stderr=subprocess.STDOUT)
+            subprocess.Popen(run_command, cwd=root, stdout=log, stderr=subprocess.STDOUT)
         print("Interactive preview running; press 1/2/3. Log: " + str(root / "logs/run.log"))
     else:
-        support.command([contents / "MacOS/Mac_Runner"], root / "logs/run.log", cwd=root, timeout=40)
-        for line in (root / "logs/run.log").read_text(errors="replace").splitlines():
-            if line.startswith("FVM_VICTORY_"):
+        support.command(run_command, root / "logs/run.log", cwd=root, timeout=60)
+        output = (root / "logs/run.log").read_text(errors="replace")
+        reports = re.findall(r"FVM_VICTORY_RESULT=(\{[^\r\n]+\})", output)
+        if not reports:
+            raise RuntimeError("Fixture did not emit its result; inspect " + str(root / "logs/run.log"))
+        result = json.loads(reports[-1])
+        support.write_yy(root / "results.json", result)
+        print(str(int(result["passed"])) + "/" + str(int(result["total"])) + " victory assertions passed.")
+        print("Report: " + str(root / "results.json"))
+        for line in output.splitlines():
+            if line.startswith("FVM_VICTORY_IMAGE=") or line.startswith("FVM_VICTORY_ASSERT=0"):
                 print(line)
-        if "FVM_VICTORY_SAVE_CALLS=0" not in (root / "logs/run.log").read_text(errors="replace") or "FVM_VICTORY_ASSERT=0" in (root / "logs/run.log").read_text(errors="replace"):
+        if "FVM_VICTORY_SAVE_CALLS=0" not in output or result["passed"] != result["total"]:
             raise RuntimeError("Fixture did not finish with zero save calls; inspect " + str(root / "logs/run.log"))
 
 
